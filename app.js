@@ -6914,57 +6914,42 @@ async function importarAccesosDesdeArchivo(event) {
   event.target.value = ''; // permite volver a elegir el mismo archivo después
   if (!file) return;
 
-  if (!window.XLSX) {
-    try {
-      await new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        s.onload = res; s.onerror = rej; document.head.appendChild(s);
-      });
-    } catch(e) {
-      toast('❌ La librería de Excel no cargó, recargue la página e intente de nuevo', 'err');
+  try {
+    // leerArchivoTabular soporta Excel (.xlsx/.xls, vía librería XLSX, cargándola
+    // sola si hace falta) y CSV (lectura de texto plano, sin depender de esa librería)
+    const filas = await leerArchivoTabular(file);
+    if (filas.length < 2) {
+      toast('El archivo no tiene filas de datos', 'err');
       return;
     }
-  }
 
-  try {
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: 'array' });
-    const primeraHoja = wb.Sheets[wb.SheetNames[0]];
-    const filas = XLSX.utils.sheet_to_json(primeraHoja, { defval: '' });
+    const encabezado = (filas[0] || []).map(h => String(h || '').toUpperCase().trim());
+    const colCorreo = encabezado.findIndex(c => /CORREO|EMAIL|E-MAIL|MAIL/i.test(c));
+    const colArea   = encabezado.findIndex(c => /ÁREA|AREA/i.test(c));
+    const colCodigo = encabezado.findIndex(c => /C[OÓ]DIGO|^COD$|^C[OÓ]D\.?$/i.test(c));
 
-    if (!filas.length) {
-      toast('El archivo no tiene filas de datos', 'err');
+    if (colCorreo === -1 || colArea === -1) {
+      toast('❌ No se encontró una columna de correo y/o de área en el archivo. Verifique los encabezados.', 'err');
       return;
     }
 
     const areasReales = await obtenerAreasNovedades();
     const areasNorm = new Map(areasReales.map(a => [a.toLowerCase().trim(), a]));
 
-    // Detectar automáticamente qué columna es correo y cuál es área
-    const columnas = Object.keys(filas[0]);
-    const colCorreo = columnas.find(c => /correo|email|e-mail|mail/i.test(c));
-    const colArea   = columnas.find(c => /área|area/i.test(c));
-    const colCodigo = columnas.find(c => /c[oó]digo|codigo|^cod$|^c[oó]d\.?$/i.test(c));
-
-    if (!colCorreo || !colArea) {
-      toast('❌ No se encontró una columna de correo y/o de área en el archivo. Verifique los encabezados.', 'err');
-      return;
-    }
-
-    filasImportarAccesos = filas.map(fila => {
+    filasImportarAccesos = filas.slice(1).map(fila => {
       const correo = String(fila[colCorreo] || '').toLowerCase().trim();
-      const areaTexto = String(fila[colArea] || '').trim();
+      const areaTexto = sanitizarNombreArea(String(fila[colArea] || '').trim());
       const areaReal = areasNorm.get(areaTexto.toLowerCase());
-      const codigo = colCodigo ? String(fila[colCodigo] || '').trim() : '';
+      const codigo = colCodigo !== -1 ? String(fila[colCodigo] || '').trim() : '';
 
       let valido = true, motivo = '';
+      let esAreaNueva = false;
       if (!correo || !correo.includes('@')) { valido = false; motivo = 'Correo inválido o vacío'; }
       else if (!areaTexto) { valido = false; motivo = 'Área vacía'; }
-      else if (!areaReal) { valido = false; motivo = `Área "${areaTexto}" no existe en el sistema`; }
+      else if (!areaReal) { esAreaNueva = true; motivo = `Área nueva — se creará en el catálogo`; }
 
-      return { correo, codigo, area: areaReal || areaTexto, valido, motivo };
-    });
+      return { correo, codigo, area: areaReal || areaTexto, valido, esAreaNueva, motivo };
+    }).filter(f => f.correo || f.area); // descarta filas totalmente vacías al final del archivo
 
     mostrarPrevisualizacionImportarAccesos();
 
@@ -6977,18 +6962,20 @@ async function importarAccesosDesdeArchivo(event) {
 function mostrarPrevisualizacionImportarAccesos() {
   const validos = filasImportarAccesos.filter(f => f.valido).length;
   const invalidos = filasImportarAccesos.length - validos;
+  const areasNuevas = new Set(filasImportarAccesos.filter(f => f.valido && f.esAreaNueva).map(f => f.area));
 
   $('modal-importar-accesos-sub').textContent =
-    `${filasImportarAccesos.length} filas leídas — ${validos} válidas${invalidos ? `, ${invalidos} con error (no se importarán)` : ''}`;
+    `${filasImportarAccesos.length} filas leídas — ${validos} válidas${invalidos ? `, ${invalidos} con error (no se importarán)` : ''}` +
+    (areasNuevas.size ? ` · ${areasNuevas.size} área(s) nueva(s) se crearán en el catálogo` : '');
 
   const cont = $('modal-importar-accesos-lista');
   cont.innerHTML = filasImportarAccesos.map(f => `
     <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;">
-      <span style="width:16px;flex-shrink:0;">${f.valido ? '✅' : '❌'}</span>
+      <span style="width:16px;flex-shrink:0;">${!f.valido ? '❌' : (f.esAreaNueva ? '🆕' : '✅')}</span>
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <strong>${f.correo || '(sin correo)'}</strong>${f.codigo ? ` · CÓD ${f.codigo}` : ''} — ${f.area || '(sin área)'}
       </span>
-      ${!f.valido ? `<span style="color:var(--red);font-size:11px;flex-shrink:0;">${f.motivo}</span>` : ''}
+      ${(!f.valido || f.esAreaNueva) ? `<span style="color:${f.valido ? 'var(--gold, #b8860b)' : 'var(--red)'};font-size:11px;flex-shrink:0;">${f.motivo}</span>` : ''}
     </div>
   `).join('');
 
@@ -7011,6 +6998,21 @@ async function confirmarImportarAccesos() {
   const btn = $('btn-confirmar-importar-accesos');
   btn.disabled = true;
   btn.textContent = 'Importando...';
+
+  // Sumar al catálogo las áreas nuevas que traiga el archivo (unión, nunca reemplazo)
+  const areasNuevas = [...new Set(validos.filter(f => f.esAreaNueva).map(f => f.area))];
+  if (areasNuevas.length) {
+    try {
+      const areasRef = window._fb.doc(db, 'sistema', 'areas_novedades');
+      const areasSnap = await window._fb.getDoc(areasRef);
+      const previas = areasSnap.exists() ? (areasSnap.data().lista || []) : [];
+      const union = Array.from(new Set([...previas, ...areasNuevas])).sort();
+      await window._fb.setDoc(areasRef, { lista: union, ultimaActualizacion: new Date() }, { merge: true });
+    } catch(e) {
+      console.error('No se pudo crear las áreas nuevas en el catálogo:', e);
+      toast('⚠️ No se pudieron crear las áreas nuevas, se importarán solo los accesos con área existente: ' + e.message, 'err');
+    }
+  }
 
   let ok = 0, error = 0;
   for (const fila of validos) {
@@ -7035,8 +7037,8 @@ async function confirmarImportarAccesos() {
 
   await registrarEnAuditoria(
     'importar_accesos', null, usuario.email, null, null,
-    { cantidad: ok },
-    `Importación masiva de accesos: ${ok} creados/actualizados${error ? `, ${error} con error` : ''}`
+    { cantidad: ok, areasNuevas },
+    `Importación masiva de accesos: ${ok} creados/actualizados${error ? `, ${error} con error` : ''}${areasNuevas.length ? ` · áreas nuevas creadas: ${areasNuevas.join(', ')}` : ''}`
   );
 
   cerrarModalImportarAccesos();
