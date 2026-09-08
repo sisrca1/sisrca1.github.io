@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RCA v1.0 — Registro y Control de Asistencia</title>
+<title>Portal SISCTE v6.0 — Novedades + Envíos</title>
 <link rel="icon" type="image/png" sizes="32x32" href="img/favicon_32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="img/favicon_16.png">
 <link rel="apple-touch-icon" href="img/SISCTE_logo_icono_256.png">
@@ -18,19 +18,12 @@
 <nav>
   <div class="nav-left" id="nav-left-home" onclick="irInicioNav()" style="cursor:pointer" title="Ir a Novedades">
     <div class="nav-logo-ico">
-      <svg width="17" height="17" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg" aria-label="Logo RCA">
-        <rect x="0"  y="0"  width="8" height="8" rx="1.6" fill="#f5d76e"/>
-        <rect x="11" y="0"  width="8" height="8" rx="1.6" fill="#f5d76e"/>
-        <rect x="22" y="0"  width="8" height="8" rx="1.6" fill="none" stroke="#f5d76e" stroke-width="1.6" opacity=".55"/>
-        <rect x="0"  y="11" width="8" height="8" rx="1.6" fill="#f5d76e"/>
-        <rect x="11" y="11" width="8" height="8" rx="1.6" fill="none" stroke="#f5d76e" stroke-width="1.6" opacity=".55"/>
-        <rect x="22" y="11" width="8" height="8" rx="1.6" fill="#f5d76e"/>
-        <rect x="0"  y="22" width="8" height="8" rx="1.6" fill="none" stroke="#f5d76e" stroke-width="1.6" opacity=".55"/>
-        <rect x="11" y="22" width="8" height="8" rx="1.6" fill="#f5d76e"/>
-        <rect x="22" y="22" width="8" height="8" rx="1.6" fill="none" stroke="#f5d76e" stroke-width="1.6" opacity=".55"/>
+      <svg width="13" height="20" viewBox="95 43 130 196" xmlns="http://www.w3.org/2000/svg" aria-label="Logo SISCTE">
+        <path d="M205,88 C205,68 188,58 160,58 C136,58 119,68 113,84" fill="none" stroke="#e8b84b" stroke-width="34" stroke-linecap="round"/>
+        <path d="M113,84 C110,90 110,93 110,96 C110,122 132,130 160,138 C190,146 210,156 210,184 C210,210 190,224 160,224 C130,224 112,212 110,192" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round"/>
       </svg>
     </div>
-    <span class="nav-brand">RCA v1.0</span>
+    <span class="nav-brand">SISCTE v6.0</span>
   </div>
   <div class="nav-right" id="nav-sesion" style="display:none">
     <button class="nav-btn" id="nb-novedades" style="display:none">📋 Novedades</button>
@@ -53,7 +46,7 @@
     </button>
   </div>
   <div id="nav-guest" style="display:flex;align-items:center;gap:8px;">
-    <span class="nav-guest-txt">Portal RCA</span>
+    <span class="nav-guest-txt">Portal SISCTE</span>
     <button class="btn-modo" id="btn-modo-guest" title="Cambiar modo">🌙</button>
   </div>
 </nav>
@@ -75,21 +68,14 @@
           </div>
           <div class="lpl-logo-row">
             <div class="lpl-logo">
-              <svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg" aria-label="Logo RCA">
-                <rect x="0"  y="0"  width="8" height="8" rx="1.6" fill="#e8b84b"/>
-                <rect x="11" y="0"  width="8" height="8" rx="1.6" fill="#e8b84b"/>
-                <rect x="22" y="0"  width="8" height="8" rx="1.6" fill="none" stroke="#ffffff" stroke-width="1.6"/>
-                <rect x="0"  y="11" width="8" height="8" rx="1.6" fill="#e8b84b"/>
-                <rect x="11" y="11" width="8" height="8" rx="1.6" fill="none" stroke="#ffffff" stroke-width="1.6"/>
-                <rect x="22" y="11" width="8" height="8" rx="1.6" fill="#e8b84b"/>
-                <rect x="0"  y="22" width="8" height="8" rx="1.6" fill="none" stroke="#ffffff" stroke-width="1.6"/>
-                <rect x="11" y="22" width="8" height="8" rx="1.6" fill="#e8b84b"/>
-                <rect x="22" y="22" width="8" height="8" rx="1.6" fill="none" stroke="#ffffff" stroke-width="1.6"/>
+              <svg width="23" height="34" viewBox="95 43 130 196" xmlns="http://www.w3.org/2000/svg" aria-label="Logo SISCTE">
+                <path d="M205,88 C205,68 188,58 160,58 C136,58 119,68 113,84" fill="none" stroke="#e8b84b" stroke-width="34" stroke-linecap="round"/>
+                <path d="M113,84 C110,90 110,93 110,96 C110,122 132,130 160,138 C190,146 210,156 210,184 C210,210 190,224 160,224 C130,224 112,212 110,192" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round"/>
               </svg>
             </div>
-            <div class="lpl-title" style="color:#e8b84b;">RCA v1.0</div>
+            <div class="lpl-title">SISCTE</div>
           </div>
-          <p class="lpl-sub">Registro y Control de Asistencia · Personal CTE</p>
+          <p class="lpl-sub">Portal de Gestión de Envíos · Personal CTE</p>
         </div>
         <div>
           <p style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:8px;">Registro seguro · Confirmación automática · Historial completo</p>
@@ -99,7 +85,7 @@
             <div class="lpl-dot"></div>
           </div>
           <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.1);padding-top:12px;">
-            <p style="font-size:10px;color:rgba(255,255,255,.4);margin:0;line-height:1.6;">v1.0 2026 Registro y Control de Asistencia (RCA)<br>Todos los derechos reservados</p>
+            <p style="font-size:10px;color:rgba(255,255,255,.4);margin:0;line-height:1.6;">v6.0 2026 SISCTE<br>Todos los derechos reservados</p>
           </div>
         </div>
       </div>
@@ -722,16 +708,20 @@
           <div style="padding:20px;">
             <div class="sec-titulo">🔄 Actualizar áreas de los efectivos desde Excel</div>
             <p style="color:var(--txt2);margin-bottom:16px;font-size:12px;">
-              Compara el archivo contra la base que ya tiene y <strong>actualiza únicamente el área</strong> de los códigos
-              que coincidan. No borra personal, no toca las novedades ya cargadas y no modifica ningún otro dato.
+              Compara el archivo contra la base que ya tiene y <strong>actualiza el área</strong> de los códigos
+              que coincidan. No borra personal ni modifica ningún otro dato.
               El archivo debe traer al menos las columnas <strong>CÓDIGO</strong> y <strong>ÁREA</strong>; las demás se ignoran.
             </p>
             <div class="info-badge" style="margin-bottom:16px;">
-              El cambio de área rige desde el mes siguiente: el mes en curso queda tal como está, con lo ya registrado.
+              En Novedades de este mes, cada efectivo que cambia de área queda registrado en ambas: los días antes del corte en su área anterior (con lo ya cargado) y desde el corte en la nueva área.
             </div>
             <div class="form-field">
               <label class="form-label">Archivo (CSV o Excel)</label>
               <input type="file" id="areas-update-file" accept=".csv,.xlsx,.xls" class="form-select">
+            </div>
+            <div class="form-field" style="max-width:180px;">
+              <label class="form-label">Día de corte para el mes en curso</label>
+              <input type="number" id="areas-update-corte" class="form-select" min="1" max="31" placeholder="Hoy">
             </div>
             <div class="form-field" style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn-acc btn-acc-blue" onclick="analizarActualizacionAreas()">🔍 Analizar archivo</button>
@@ -800,7 +790,7 @@
           </div>
         </div>
 
-        <div class="panel-white" style="margin-top:16px;" data-permiso="importar_ver_personal,importar_editar_personal">
+        <div class="panel-white" style="margin-top:16px;" data-permiso="importar_ver_personal">
           <div style="padding:20px;">
             <div class="sec-titulo">📇 Base de Personal (directorio completo)</div>
             <p style="color:var(--txt2);margin-bottom:16px;font-size:12px;">
@@ -823,13 +813,17 @@
                 <label class="form-label">Área</label>
                 <input type="text" id="personal-filtro-area" class="filtro-input" oninput="filtrarPersonal()" placeholder="Buscar...">
               </div>
-              <button class="btn-acc btn-acc-green" onclick="abrirModalPersonal()" style="height:38px;" data-permiso="importar_editar_personal">➕ Agregar</button>
+              <button class="btn-acc btn-acc-green" id="btn-agregar-personal" onclick="abrirModalPersonal()" style="height:38px;">➕ Agregar</button>
             </div>
 
             <div id="personal-cambio-lote" style="display:none;margin-bottom:16px;padding:12px 16px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;align-items:center;gap:12px;flex-wrap:wrap;">
               <span id="personal-cambio-lote-info" style="font-size:12px;font-weight:600;color:var(--blue);"></span>
               <select id="personal-cambio-lote-area" class="form-select" style="max-width:280px;"></select>
-              <button class="btn-acc btn-acc-blue" onclick="aplicarCambioAreaLote()" data-permiso="importar_editar_personal,importar_cambio_lote">Aplicar área a los seleccionados</button>
+              <label style="font-size:12px;font-weight:600;color:var(--blue);display:flex;align-items:center;gap:6px;">
+                Día de corte
+                <input type="number" id="personal-cambio-lote-corte" class="form-select" min="1" max="31" style="max-width:80px;" placeholder="Hoy">
+              </label>
+              <button class="btn-acc btn-acc-blue" onclick="aplicarCambioAreaLote()">Aplicar área a los seleccionados</button>
               <button class="btn-acc btn-acc-ghost" onclick="limpiarSeleccionPersonal()">Cancelar selección</button>
             </div>
 
@@ -895,6 +889,12 @@
               <input type="text" id="accesos-buscar" class="form-select" style="flex:1;min-width:220px;"
                      placeholder="Buscar por área, nombre, código o correo..."
                      oninput="buscarAccesos(this.value)" autocomplete="off">
+              <div style="display:flex;gap:6px;">
+                <button class="btn-acc btn-acc-ghost chip-grupo-acceso" data-grupo="todos" style="padding:5px 12px;font-size:11px;background:#0d1b3e;color:#e8b84b;" onclick="filtrarGrupoAccesos('todos')">Todos</button>
+                <button class="btn-acc btn-acc-ghost chip-grupo-acceso" data-grupo="G1" style="padding:5px 12px;font-size:11px;" onclick="filtrarGrupoAccesos('G1')">Grupo 1</button>
+                <button class="btn-acc btn-acc-ghost chip-grupo-acceso" data-grupo="G2" style="padding:5px 12px;font-size:11px;" onclick="filtrarGrupoAccesos('G2')">Grupo 2</button>
+                <button class="btn-acc btn-acc-ghost chip-grupo-acceso" data-grupo="sin" style="padding:5px 12px;font-size:11px;" onclick="filtrarGrupoAccesos('sin')">Sin grupo</button>
+              </div>
             </div>
             <div id="accesos-lista" style="display:flex;flex-direction:column;gap:8px;">
               <!-- Accesos se cargan aquí -->
@@ -1166,30 +1166,6 @@
             <button class="btn-acc btn-acc-blue" onclick="restaurarConfigCierrePorDefecto()">↩️ Restaurar valores por defecto (1 y 1)</button>
           </div>
         </div>
-
-        <!-- Preparar mes: crea de una sola vez el mes en todas las áreas, arrastrando la nómina -->
-        <div id="config-preparar-mes" class="panel-white" style="display:none;padding:20px;margin-top:20px;border:2px solid var(--blue-m);">
-          <div class="sec-titulo">📅 Preparar mes en todas las áreas</div>
-          <p style="font-size:12px;color:var(--txt2);margin-bottom:16px;">
-            Crea el mes elegido en todas las áreas del catálogo que todavía no lo tengan, arrastrando la nómina
-            del mes anterior con las novedades en blanco. <strong>Las áreas que ya tienen el mes creado no se tocan</strong>,
-            así que puede ejecutarlo las veces que necesite sin riesgo de perder lo ya registrado.
-          </p>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;max-width:460px;">
-            <div class="form-field" style="margin-bottom:0;">
-              <label class="form-label">Mes a preparar</label>
-              <select id="preparar-mes-mes" class="filtro-select"></select>
-            </div>
-            <div class="form-field" style="margin-bottom:0;">
-              <label class="form-label">Año</label>
-              <select id="preparar-mes-anio" class="filtro-select"></select>
-            </div>
-          </div>
-          <button class="btn-acc btn-acc-blue" id="btn-preparar-mes" onclick="prepararMesEnTodasLasAreas()">
-            📅 Preparar mes
-          </button>
-          <div id="preparar-mes-progreso" class="info-badge" style="display:none;margin-top:14px;"></div>
-        </div>
       </div>
 
       <!-- TAB 6: Permisos (solo superadmin) -->
@@ -1232,7 +1208,14 @@
         <label class="form-label">Área</label>
         <input type="text" id="modal-personal-area" class="form-select">
       </div>
-      
+      <div class="form-field" id="modal-personal-corte-wrap" style="display:none;">
+        <label class="form-label">Día de corte (si cambia de área)</label>
+        <input type="number" id="modal-personal-corte" class="form-select" min="1" max="31" style="max-width:120px;">
+        <small style="display:block;margin-top:4px;color:var(--txt2, #666);font-size:11px;">
+          Los días antes de este número quedan en el área anterior; desde este día en adelante pasa a la nueva área. El agente queda registrado en ambas áreas este mes.
+        </small>
+      </div>
+
       <div id="modal-personal-error" style="display:none;padding:10px 12px;background:var(--red);color:white;border-radius:8px;font-size:12px;margin-bottom:16px;"></div>
       <div class="modal-footer">
         <button class="btn-modal-cancel" onclick="cerrarModalPersonal()">Cancelar</button>
