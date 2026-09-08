@@ -6785,9 +6785,9 @@ async function editarAcceso(docId, correoActual, areaAsignada, codigoActual) {
   modalAccesoDocIdEdicion = docId;
   await poblarSelectAreaAcceso(areaAsignada);
   $('modal-acceso-titulo').textContent = 'Editar Acceso';
-  $('modal-acceso-sub').textContent = 'Cambie el código o el área asignada a este correo';
+  $('modal-acceso-sub').textContent = 'Cambie el correo, el código o el área asignada';
   $('modal-acceso-correo').value = correoActual || docId;
-  $('modal-acceso-correo').disabled = true; // el correo es el ID del documento, no se cambia acá
+  $('modal-acceso-correo').disabled = false; // el correo ahora sí se puede editar
   if ($('modal-acceso-codigo')) $('modal-acceso-codigo').value = codigoActual || '';
   if ($('modal-acceso-codigo-info')) $('modal-acceso-codigo-info').textContent = '';
   if (codigoActual) verificarCodigoAcceso();
@@ -6817,16 +6817,54 @@ async function confirmarGuardarAcceso() {
     return;
   }
 
-  await guardarAcceso(correo, area, codigo);
+  await guardarAcceso(correo, area, codigo, modalAccesoDocIdEdicion);
   cerrarModalAcceso();
 }
 
-async function guardarAcceso(correo, area, codigo) {
+async function guardarAcceso(correo, area, codigo, docIdAnterior = null) {
   try {
     const correoNorm = correo.toLowerCase().trim();
+    const accesoRef = window._fb.doc(db, 'accesos', correoNorm);
+
+    // Está editando un acceso existente y cambió el correo: el correo es el ID
+    // del documento en Firestore, así que no se puede "renombrar" — hay que
+    // crear el documento nuevo con los datos de siempre y borrar el anterior.
+    if (docIdAnterior && docIdAnterior !== correoNorm) {
+      const refAnterior = window._fb.doc(db, 'accesos', docIdAnterior);
+      const snapAnterior = await window._fb.getDoc(refAnterior);
+      if (!snapAnterior.exists()) {
+        toast('❌ No se encontró el acceso original, no se pudo cambiar el correo', 'err');
+        return;
+      }
+      const destinoExistente = await window._fb.getDoc(accesoRef);
+      if (destinoExistente.exists()) {
+        toast(`❌ Ya existe un acceso con el correo ${correoNorm}`, 'err');
+        return;
+      }
+
+      const datosAnteriores = snapAnterior.data();
+      await window._fb.setDoc(accesoRef, {
+        ...datosAnteriores,
+        correo: correoNorm,
+        codigo: String(codigo || '').trim(),
+        area: area,
+        ultimaEdicion: new Date()
+      });
+      await window._fb.deleteDoc(refAnterior);
+
+      await registrarEnAuditoria(
+        'editar_acceso', area, correoNorm, null, null,
+        { codigo, correoAnterior: docIdAnterior },
+        `Acceso con correo cambiado: ${docIdAnterior} → ${correoNorm} (área ${area})`
+      );
+
+      toast(`✅ Acceso actualizado — correo cambiado a ${correoNorm}`, 'ok');
+      cargarAccesos();
+      return;
+    }
+
     // Un solo registro por correo (usando el correo como ID) — si la persona ya tenía
     // acceso y rota de área, esto ACTUALIZA su área en vez de crear un duplicado.
-    const accesoRef = window._fb.doc(db, 'accesos', correoNorm);
     const existente = await window._fb.getDoc(accesoRef);
 
     await window._fb.setDoc(accesoRef, {
@@ -6877,8 +6915,16 @@ async function importarAccesosDesdeArchivo(event) {
   if (!file) return;
 
   if (!window.XLSX) {
-    toast('❌ La librería de Excel no cargó, recargue la página e intente de nuevo', 'err');
-    return;
+    try {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        s.onload = res; s.onerror = rej; document.head.appendChild(s);
+      });
+    } catch(e) {
+      toast('❌ La librería de Excel no cargó, recargue la página e intente de nuevo', 'err');
+      return;
+    }
   }
 
   try {
