@@ -1067,6 +1067,37 @@
           <div id="resumen-areas-sin-asignar" class="info-badge" style="display:none;margin:0 20px 16px;align-items:center;gap:8px;flex-wrap:wrap;"></div>
         </div>
 
+        <div class="panel-white" style="margin-bottom:16px;border:2px solid var(--gold, #b8860b);" data-permiso="resumen_ver,resumen_exportar">
+          <div style="padding:16px 20px;">
+            <div class="sec-titulo">📊 Reporte General por Efectivo (todas las áreas juntas)</div>
+            <p style="font-size:12px;color:var(--txt2);margin:4px 0 14px;">
+              Un solo documento con todo el personal de la CTE, día por día — igual al informe de cada área,
+              pero consolidado, sin separar por área. Disponible para Administrador y Supervisor.
+            </p>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Mes</label>
+                <select id="resumen-efectivo-mes" class="filtro-select"></select>
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Año</label>
+                <select id="resumen-efectivo-anio" class="filtro-select"></select>
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Elaborado por</label>
+                <input type="text" id="resumen-efectivo-elaborado-por" class="filtro-input" readonly placeholder="Clic para elegir..." onclick="abrirSelectorPersona('resumen-efectivo-elaborado-por')" style="cursor:pointer;">
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Responsable</label>
+                <input type="text" id="resumen-efectivo-responsable" class="filtro-input" readonly placeholder="Clic para elegir..." onclick="abrirSelectorPersona('resumen-efectivo-responsable')" style="cursor:pointer;">
+              </div>
+              <button class="btn-acc btn-acc-blue" id="btn-reporte-general-efectivo" onclick="generarReporteGeneralEfectivos()" style="margin-top:18px;">
+                📄 Generar Reporte General (Excel + PDF)
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="panel-white">
           <div style="overflow-x:auto">
             <table>

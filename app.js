@@ -2665,7 +2665,7 @@ async function cerrarYExportarMes() {
    EXPORTAR — Excel (formato oficial)
 ═════════════════════════════════════════ */
 
-async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, responsable) {
+async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, responsable, esGeneral = false) {
   if (!window.ExcelJS) {
     await new Promise((res, rej) => {
       const s = document.createElement('script');
@@ -2715,7 +2715,9 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
   const totalEfectivo = (data.agentes || []).length;
   ws.mergeCells(2, 1, 2, numCols);
   const areaCell = ws.getCell(2, 1);
-  areaCell.value = `ÁREA: ${area}   ·   MES: ${nombreMes.toUpperCase()} ${anio}   ·   EFECTIVO: ${totalEfectivo}`;
+  areaCell.value = esGeneral
+    ? `REPORTE GENERAL — TODOS LOS EFECTIVOS   ·   MES: ${nombreMes.toUpperCase()} ${anio}   ·   EFECTIVO: ${totalEfectivo}`
+    : `ÁREA: ${area}   ·   MES: ${nombreMes.toUpperCase()} ${anio}   ·   EFECTIVO: ${totalEfectivo}`;
   estiloNavy(areaCell);
   ws.getRow(2).height = 20;
 
@@ -2850,7 +2852,7 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `novedades_${area}_${periodo}.xlsx`;
+  link.download = `novedades_${esGeneral ? 'REPORTE_GENERAL' : area}_${periodo}.xlsx`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -2861,7 +2863,7 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
    EXPORTAR — PDF (formato oficial)
 ═════════════════════════════════════════ */
 
-async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsable) {
+async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsable, esGeneral = false) {
   if (!window.jspdf) {
     await new Promise((res, rej) => {
       const s = document.createElement('script');
@@ -2908,7 +2910,12 @@ async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsab
     doc.setFillColor(...NAVY);
     doc.rect(10, 16, anchoPagina - 20, 7, 'F');
     doc.setFontSize(10);
-    doc.text(`ÁREA: ${area}   ·   MES: ${nombreMes.toUpperCase()} ${anio}   ·   EFECTIVO: ${totalEfectivo}`, anchoPagina / 2, 21, { align: 'center' });
+    doc.text(
+      esGeneral
+        ? `REPORTE GENERAL — TODOS LOS EFECTIVOS   ·   MES: ${nombreMes.toUpperCase()} ${anio}   ·   EFECTIVO: ${totalEfectivo}`
+        : `ÁREA: ${area}   ·   MES: ${nombreMes.toUpperCase()} ${anio}   ·   EFECTIVO: ${totalEfectivo}`,
+      anchoPagina / 2, 21, { align: 'center' }
+    );
     doc.setTextColor(0, 0, 0);
 
     // ── Logo institucional de la CTE (izquierda) sobre el banner. Es la
@@ -3082,7 +3089,7 @@ async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsab
     doc.text(`Página ${p} de ${totalPaginas}`, anchoPagina - 12, altoPagina - 4, { align: 'right' });
   }
 
-  doc.save(`novedades_${area}_${periodo}.pdf`);
+  doc.save(`novedades_${esGeneral ? 'REPORTE_GENERAL' : area}_${periodo}.pdf`);
 }
 
 /* ═════════════════════════════════════════
@@ -3257,7 +3264,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (tabName === 'accesos')     cargarAccesos();
       if (tabName === 'auditoria')   { poblarFiltrosAuditoria(); cargarAuditoria(); }
       if (tabName === 'desbloqueos') { cargarDesbloqueos(); poblarSelectoresDesbloqueoDirecto(); }
-      if (tabName === 'resumen') { poblarSelectoresResumen(); cargarResumenGeneral(); }
+      if (tabName === 'resumen') { poblarSelectoresResumen(); cargarResumenGeneral(); poblarSelectoresResumen('resumen-efectivo'); }
       if (tabName === 'importar') { cargarDirectorioPersonal(); poblarSelectoresBackupManual(); }
       if (tabName === 'areas') cargarAreasPanel();
       if (tabName === 'config') cargarConfigPanel();
@@ -8059,6 +8066,63 @@ function poblarSelectoresResumen(prefix = 'resumen') {
   selAnio.value = String(new Date().getFullYear());
 }
 
+/* ── Reporte General por Efectivo — consolida TODAS las áreas en un solo
+   documento día por día, sin separarlas ni mostrar de qué área es cada
+   quien. Disponible para Administrador y Supervisor (mismo permiso que el
+   resto del Resumen General: resumen_ver / resumen_exportar). Reutiliza el
+   mismo formato Excel/PDF del informe por área (exportarNovedadesExcel /
+   exportarNovedadesPDF), pasándoles esGeneral=true para que la cabecera
+   diga "REPORTE GENERAL" en vez de nombrar un área. ── */
+async function generarReporteGeneralEfectivos() {
+  const mes = $('resumen-efectivo-mes').value;
+  const anio = $('resumen-efectivo-anio').value;
+  const elaboradoPor = $('resumen-efectivo-elaborado-por').value.trim();
+  const responsable = $('resumen-efectivo-responsable').value.trim();
+  const btn = $('btn-reporte-general-efectivo');
+
+  if (!mes || !anio) { toast('Elegí mes y año', 'err'); return; }
+  if (!elaboradoPor || !responsable) { toast('Elegí "Elaborado por" y "Responsable"', 'err'); return; }
+
+  const periodo = `${anio}-${mes}`;
+  const txtOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Consolidando todas las áreas...';
+
+  try {
+    const areas = await obtenerAreasNovedades();
+    let todosLosAgentes = [];
+    let areasConDatos = 0;
+
+    for (const area of areas) {
+      const ref = window._fb.doc(db, 'novedades', area, periodo, 'datos');
+      const snap = await window._fb.getDoc(ref);
+      if (!snap.exists()) continue;
+      const agentes = snap.data().agentes || [];
+      if (agentes.length) {
+        areasConDatos++;
+        todosLosAgentes = todosLosAgentes.concat(agentes);
+      }
+    }
+
+    if (!todosLosAgentes.length) {
+      toast(`⚠️ Ninguna área tiene novedades cargadas en ${periodo} — se generará el reporte en blanco`, 'ok');
+    }
+
+    const dataGeneral = { agentes: ordenarAgentesPorGrado(todosLosAgentes) };
+
+    await exportarNovedadesExcel(dataGeneral, 'REPORTE GENERAL', periodo, elaboradoPor, responsable, true);
+    await exportarNovedadesPDF(dataGeneral, 'REPORTE GENERAL', periodo, elaboradoPor, responsable, true);
+
+    toast(`✅ Reporte general generado — ${todosLosAgentes.length} efectivos de ${areasConDatos} área${areasConDatos === 1 ? '' : 's'}`, 'ok');
+  } catch (e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = txtOriginal;
+  }
+}
+
 /* Áreas del catálogo sin ningún correo asignado. Se muestra únicamente al
    administrador dentro del Resumen General: es información de gestión interna,
    no algo que deban ver los secretarios ni los supervisores. */
@@ -8518,6 +8582,7 @@ window.responderConfirmacion        = responderConfirmacion;
 window.intentarConfirmarGenerico    = intentarConfirmarGenerico;
 window.confirmarRechazarDesbloqueo  = confirmarRechazarDesbloqueo;
 window.cargarResumenGeneral         = cargarResumenGeneral;
+window.generarReporteGeneralEfectivos = generarReporteGeneralEfectivos;
 window.exportarResumenGeneralExcel  = exportarResumenGeneralExcel;
 window.mostrarDetalleCodigo         = mostrarDetalleCodigo;
 
