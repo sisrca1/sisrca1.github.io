@@ -1257,7 +1257,7 @@ const ORDEN_GRADOS = [
   'PREFECTO COMANDANTE',
   'PREFECTO JEFE',
   'PREFECTO',
-  'SUB PREFECTO',
+  'SUBPREFECTO',
   'INSPECTOR',
   'SUBINSPECTOR DE TRANSITO 1',
   'SUBINSPECTOR DE TRANSITO 2',
@@ -1272,7 +1272,8 @@ function normalizarGrado(grado) {
     .trim()
     .toUpperCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, ''); // quita tildes para comparar sin diferencias
+    .replace(/[\u0300-\u036f]/g, '') // quita tildes para comparar sin diferencias
+    .replace(/\s+/g, ''); // quita todos los espacios — así "SUBPREFECTO" y "SUB PREFECTO" comparan igual
 }
 
 function indiceDeGrado(grado) {
