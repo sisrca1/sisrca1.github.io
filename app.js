@@ -787,6 +787,33 @@ async function poblarSelectorAreaAdmin() {
   comboboxAreaNovedadesAdmin.actualizar(areasReales, areaActual);
 }
 
+/* ── Selector de "área activa" para un secretario con varias áreas
+   agrupadas bajo un mismo correo. A diferencia del selector del admin
+   (que busca en TODO el catálogo), este solo lista las áreas que el
+   propio correo tiene asignadas en `accesos.areas`. ── */
+function poblarSelectorAreaActivaSecretario(areas, seleccionada) {
+  const sel = $('select-area-activa-secretario');
+  if (!sel) return;
+  sel.innerHTML = areas.map(a =>
+    `<option value="${String(a).replace(/"/g, '&quot;')}" ${a === seleccionada ? 'selected' : ''}>${a}</option>`
+  ).join('');
+}
+
+async function cambiarAreaActivaSecretario(area) {
+  if (!area || area === areaActual) return;
+  areaActual = area;
+
+  // Se recuerda para la próxima vez que entre, aunque sea desde otro dispositivo.
+  try {
+    const correoNorm = String(usuario.email || '').toLowerCase().trim();
+    await window._fb.setDoc(window._fb.doc(db, 'accesos', correoNorm), { areaActiva: area }, { merge: true });
+  } catch (e) {
+    console.warn('No se pudo guardar el área activa:', e);
+  }
+
+  cargarNovedadesActuales();
+}
+
 async function cargarNovedadesActuales() {
   try {
     const dateParts = obtenerFechaParts();
@@ -797,6 +824,7 @@ async function cargarNovedadesActuales() {
       // El admin gestiona cualquier área; el supervisor puede recorrerlas todas
       // en modo lectura (los controles de edición quedan igualmente bloqueados
       // por tienePermisoAccion, que solo le concede acciones _ver y _exportar).
+      hide('selector-area-activa-secretario');
       await poblarSelectorAreaAdmin();
     } else {
       hide('admin-selector-area-novedades');
@@ -814,6 +842,7 @@ async function cargarNovedadesActuales() {
         hide('tabla-novedades-container');
         hide('cierre-mes-container');
         hide('novedades-top-controles');
+        hide('selector-area-activa-secretario');
         show('tabla-cargando');
         $('tabla-cargando').textContent = '❌ Correo no configurado';
         return;
@@ -829,12 +858,31 @@ async function cargarNovedadesActuales() {
         hide('tabla-novedades-container');
         hide('cierre-mes-container');
         hide('novedades-top-controles');
+        hide('selector-area-activa-secretario');
         show('tabla-cargando');
         $('tabla-cargando').textContent = '🔒 Acceso bloqueado';
         return;
       }
 
-      areaActual = acceso.area;
+      // Un secretario agrupado tiene varias áreas asignadas (accesos.areas).
+      // Se recuerda la última elegida (accesos.areaActiva); si no hay ninguna
+      // guardada, o ya no está entre sus áreas, se cae a la primera.
+      const areasSecretario = Array.isArray(acceso.areas) && acceso.areas.length
+        ? acceso.areas
+        : (acceso.area ? [acceso.area] : []);
+
+      if (!areaActual || !areasSecretario.includes(areaActual)) {
+        areaActual = areasSecretario.includes(acceso.areaActiva)
+          ? acceso.areaActiva
+          : (areasSecretario[0] || acceso.area || '');
+      }
+
+      if (areasSecretario.length > 1) {
+        poblarSelectorAreaActivaSecretario(areasSecretario, areaActual);
+        show('selector-area-activa-secretario');
+      } else {
+        hide('selector-area-activa-secretario');
+      }
     }
 
     mesActual = periodo;
@@ -6771,10 +6819,13 @@ function renderizarChipsAreaAcceso() {
     return;
   }
   const esc = s => String(s).replace(/'/g, "\\'");
+  // Reutiliza la clase .badge-area (la misma insignia que ya usa el resto del
+  // sistema) para heredar automáticamente su contraste correcto en modo claro
+  // Y modo oscuro — un color fijo en línea se veía casi invisible en oscuro.
   cont.innerHTML = modalAccesoAreasSeleccionadas.map(a => `
-    <span style="display:inline-flex;align-items:center;gap:6px;background:var(--blue-l);color:var(--blue-m);padding:4px 6px 4px 10px;border-radius:14px;font-size:12px;font-weight:600;margin:3px 4px 3px 0;">
+    <span class="badge-area" style="display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;font-size:12px;margin:3px 4px 3px 0;">
       ${a}
-      <button type="button" onclick="quitarAreaModalAcceso('${esc(a)}')" title="Quitar" style="border:none;background:none;cursor:pointer;font-weight:700;color:inherit;padding:0 3px;line-height:1;">✕</button>
+      <button type="button" onclick="quitarAreaModalAcceso('${esc(a)}')" title="Quitar" style="border:none;background:none;cursor:pointer;font-weight:700;color:inherit;padding:0 3px;line-height:1;font-size:13px;">✕</button>
     </span>`).join('');
 }
 
@@ -8550,6 +8601,7 @@ window.cerrarModalRestaurarBackup    = cerrarModalRestaurarBackup;
 window.confirmarRestaurarBackup      = confirmarRestaurarBackup;
 window.guardarAcceso                = guardarAcceso;
 window.quitarAreaModalAcceso        = quitarAreaModalAcceso;
+window.cambiarAreaActivaSecretario  = cambiarAreaActivaSecretario;
 window.eliminarAcceso               = eliminarAcceso;
 window.migrarAccesosAAreasMultiples = migrarAccesosAAreasMultiples;
 window.editarAcceso                 = editarAcceso;

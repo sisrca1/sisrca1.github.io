@@ -142,6 +142,10 @@
           <div id="lista-area-admin-novedades" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shl);max-height:240px;overflow-y:auto;z-index:600;"></div>
         </div>
       </div>
+      <div id="selector-area-activa-secretario" style="display:none;margin-top:12px;">
+        <label class="form-label" style="color:#fff;opacity:.85;">Área activa</label>
+        <select id="select-area-activa-secretario" class="form-select" style="max-width:320px;" onchange="cambiarAreaActivaSecretario(this.value)"></select>
+      </div>
     </div>
 
     <div class="page-body page-body-wide">
