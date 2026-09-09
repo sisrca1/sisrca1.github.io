@@ -808,6 +808,41 @@
           </div>
         </div>
 
+        <div class="panel-white" style="border:2px solid var(--red);margin-top:16px;" data-permiso="importar_borrar_todo">
+          <div style="padding:20px;">
+            <div class="sec-titulo" style="color:var(--red);">🗑️ Borrar TODA la Base de Personal</div>
+            <p style="color:var(--txt2);margin-bottom:8px;font-size:12px;">
+              Elimina todos los registros del directorio de personal (ficha por código: grado, apellidos, nombres, área).
+              No toca Novedades, Accesos ni Auditoría — úselo junto con "Borrar Novedades" cuando quiera reimportar la base entera desde cero.
+            </p>
+            <p style="color:var(--red);margin-bottom:16px;font-size:12px;">
+              ⚠️ Acción irreversible.
+            </p>
+            <button class="btn-acc btn-acc-red" onclick="borrarTodaLaBasePersonal()" data-permiso="importar_borrar_todo">
+              🗑️ Borrar toda la Base de Personal
+            </button>
+            <div id="borrar-personal-progreso" style="display:none;margin-top:12px;font-size:12px;color:var(--txt2);"></div>
+          </div>
+        </div>
+
+        <div class="panel-white" style="border:2px solid var(--gold, #e8b84b);margin-top:16px;" data-permiso="accesos_gestionar">
+          <div style="padding:20px;">
+            <div class="sec-titulo">🔁 Actualizar nombres de área en Accesos (por mapeo)</div>
+            <p style="color:var(--txt2);margin-bottom:8px;font-size:12px;">
+              Sube un Excel con dos columnas — <strong>ÁREA VIEJA</strong> y <strong>ÁREA NUEVA</strong> — y actualiza el
+              área asignada a cada secretario que tenga la vieja, sin tocar su correo, código ni perfil.
+              Pensado para cuando renombra áreas en la Base de Personal y no quiere que los secretarios pierdan acceso.
+            </p>
+            <div class="form-field">
+              <label class="form-label">Archivo de mapeo (CSV o Excel)</label>
+              <input type="file" id="mapeo-accesos-file" accept=".csv,.xlsx,.xls" class="form-select">
+            </div>
+            <button class="btn-acc btn-acc-blue" onclick="analizarMapeoAccesos()">🔍 Analizar archivo</button>
+            <button class="btn-acc btn-acc-green" id="btn-aplicar-mapeo-accesos" style="display:none;" onclick="aplicarMapeoAccesos()">✅ Aplicar cambios</button>
+            <div id="mapeo-accesos-resultado" style="display:none;margin-top:16px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;max-height:320px;overflow-y:auto;"></div>
+          </div>
+        </div>
+
         <div class="panel-white" style="margin-top:16px;" data-permiso="importar_ver_personal">
           <div style="padding:20px;">
             <div class="sec-titulo">📇 Base de Personal (directorio completo)</div>

@@ -6626,9 +6626,218 @@ async function borrarTodaLaBaseNovedades() {
   }
 }
 
-/* ═════════════════════════════════════════
-   PANEL ADMIN — Gestionar Accesos
-═════════════════════════════════════════ */
+let mapeoAccesosPendiente = null;
+
+async function analizarMapeoAccesos() {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+
+  const input = $('mapeo-accesos-file');
+  const cont = $('mapeo-accesos-resultado');
+  hide('btn-aplicar-mapeo-accesos');
+  mapeoAccesosPendiente = null;
+
+  if (!input.files || !input.files.length) { toast('⚠️ Seleccione un archivo', 'err'); return; }
+
+  try {
+    cont.style.display = 'block';
+    cont.innerHTML = '⏳ Leyendo el archivo...';
+
+    const filas = await leerArchivoTabular(input.files[0]);
+    if (filas.length < 2) { cont.innerHTML = '❌ El archivo está vacío o mal formateado'; return; }
+
+    const encabezado = (filas[0] || []).map(h => String(h || '').toUpperCase().trim());
+    const buscar = (nombres) => { for (const n of nombres) { const i = encabezado.indexOf(n); if (i !== -1) return i; } return -1; };
+    const iVieja = buscar(['AREA VIEJA', 'ÁREA VIEJA', 'AREA ANTERIOR', 'ÁREA ANTERIOR']);
+    const iNueva = buscar(['AREA NUEVA', 'ÁREA NUEVA']);
+
+    if (iVieja === -1 || iNueva === -1) {
+      cont.innerHTML = '❌ No se encontraron las columnas necesarias. El archivo debe tener un encabezado con <strong>ÁREA VIEJA</strong> y <strong>ÁREA NUEVA</strong>.';
+      return;
+    }
+
+    const mapa = new Map(); // área vieja saneada -> área nueva saneada
+    for (let i = 1; i < filas.length; i++) {
+      const fila = filas[i] || [];
+      const vieja = sanitizarNombreArea(String(fila[iVieja] || '').trim());
+      const nueva = sanitizarNombreArea(String(fila[iNueva] || '').trim());
+      if (!vieja || !nueva || vieja === nueva) continue;
+      mapa.set(vieja.toLowerCase(), { vieja, nueva });
+    }
+
+    if (!mapa.size) { cont.innerHTML = '❌ El archivo no trae ningún par válido de área vieja → área nueva'; return; }
+
+    cont.innerHTML = '⏳ Revisando los accesos existentes...';
+    const snap = await window._fb.getDocs(window._fb.collection(db, 'accesos'));
+
+    const cambios = []; // { id, correo, antes:[...], despues:[...] }
+    snap.docs.forEach(d => {
+      const data = d.data();
+      const areasActuales = Array.isArray(data.areas) && data.areas.length
+        ? data.areas
+        : (data.area ? [data.area] : []);
+      if (!areasActuales.length) return;
+
+      let huboCambio = false;
+      const areasNuevas = areasActuales.map(a => {
+        const match = mapa.get(String(a).toLowerCase());
+        if (match) { huboCambio = true; return match.nueva; }
+        return a;
+      });
+      if (!huboCambio) return;
+
+      let areaActivaNueva = data.areaActiva;
+      const matchActiva = mapa.get(String(data.areaActiva || '').toLowerCase());
+      if (matchActiva) areaActivaNueva = matchActiva.nueva;
+
+      cambios.push({
+        id: d.id,
+        correo: data.correo || d.id,
+        antes: areasActuales,
+        despues: [...new Set(areasNuevas)],
+        areaActivaAntes: data.areaActiva || null,
+        areaActivaDespues: areaActivaNueva || null
+      });
+    });
+
+    mapeoAccesosPendiente = cambios;
+
+    const filasTabla = cambios.slice(0, 100).map(c => `
+      <tr>
+        <td style="padding:3px 8px;">${c.correo}</td>
+        <td style="padding:3px 8px;color:var(--txt2);">${c.antes.join(', ')}</td>
+        <td style="padding:3px 8px;">→</td>
+        <td style="padding:3px 8px;font-weight:700;">${c.despues.join(', ')}</td>
+      </tr>`).join('');
+
+    cont.innerHTML = `
+      <strong>Resultado del análisis</strong><br><br>
+      · <strong>${mapa.size}</strong> par(es) de área leídos del archivo<br>
+      · <strong>${cambios.length}</strong> acceso(s) van a actualizarse<br>
+      ${cambios.length ? `
+        <div style="margin-top:12px;max-height:260px;overflow:auto;">
+          <table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead><tr style="background:var(--bg);"><th style="padding:4px 8px;text-align:left;">Correo</th><th style="padding:4px 8px;text-align:left;">Áreas actuales</th><th></th><th style="padding:4px 8px;text-align:left;">Áreas nuevas</th></tr></thead>
+            <tbody>${filasTabla}</tbody>
+          </table>
+          ${cambios.length > 100 ? `<p style="margin-top:6px;color:var(--txt2);">…y ${cambios.length - 100} más.</p>` : ''}
+        </div>` : '<br><em>Ningún acceso tiene asignada un área de las que trae el archivo.</em>'}
+    `;
+
+    if (cambios.length) {
+      const btn = $('btn-aplicar-mapeo-accesos');
+      btn.style.display = 'inline-flex';
+      btn.textContent = `✅ Aplicar a ${cambios.length} acceso(s)`;
+    }
+  } catch(e) {
+    console.error(e);
+    cont.innerHTML = '❌ Error leyendo el archivo: ' + e.message;
+  }
+}
+
+async function aplicarMapeoAccesos() {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+  const cambios = mapeoAccesosPendiente || [];
+  if (!cambios.length) return;
+
+  if (!(await confirmarAccion(
+    `¿Actualizar el área asignada de ${cambios.length} acceso(s)? El correo, código y perfil de cada uno no se tocan.`,
+    'Actualizar áreas en Accesos'
+  ))) return;
+
+  const btn = $('btn-aplicar-mapeo-accesos');
+  btn.disabled = true;
+  btn.textContent = '⏳ Aplicando...';
+
+  try {
+    const tamanioLote = 50;
+    for (let i = 0; i < cambios.length; i += tamanioLote) {
+      const lote = cambios.slice(i, i + tamanioLote);
+      await Promise.all(lote.map(c => window._fb.setDoc(window._fb.doc(db, 'accesos', c.id), {
+        areas: c.despues,
+        area: c.despues[0] || '',
+        areaActiva: c.areaActivaDespues,
+        ultimaEdicion: new Date()
+      }, { merge: true })));
+    }
+
+    await registrarEnAuditoria(
+      'actualizar_areas_accesos_mapeo', null, usuario.email, null, null,
+      { cantidad: cambios.length },
+      `Actualización de áreas en Accesos por mapeo: ${cambios.length} correo(s) actualizados`
+    );
+
+    toast(`✅ ${cambios.length} acceso(s) actualizados`, 'ok');
+    $('mapeo-accesos-resultado').innerHTML += '<br><strong style="color:var(--green);">✅ Cambios aplicados.</strong>';
+    hide('btn-aplicar-mapeo-accesos');
+    mapeoAccesosPendiente = null;
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function borrarTodaLaBasePersonal() {
+  if (!esAdmin()) {
+    toast('❌ Solo el administrador puede hacer esto', 'err');
+    return;
+  }
+
+  const primeraConfirmacion = await confirmarAccion(
+    '⚠️ ESTO VA A BORRAR TODO EL DIRECTORIO DE PERSONAL (todos los códigos, grados, apellidos, nombres y áreas).\n\n' +
+    'Novedades, Accesos y Auditoría no se tocan.\n\n' +
+    '¿Está seguro de que quiere continuar?',
+    'Borrar toda la Base de Personal'
+  );
+  if (!primeraConfirmacion) { toast('Cancelado', 'ok'); return; }
+
+  const segundaConfirmacion = await confirmarConTexto(
+    'Para confirmar, escriba exactamente: BORRAR TODO',
+    'BORRAR TODO',
+    'Confirmación final'
+  );
+  if (!segundaConfirmacion) {
+    toast('Cancelado — no se borró nada', 'ok');
+    return;
+  }
+
+  const progreso = $('borrar-personal-progreso');
+  show('borrar-personal-progreso');
+  progreso.style.display = 'block';
+  progreso.textContent = 'Leyendo el directorio...';
+
+  try {
+    const snap = await window._fb.getDocs(window._fb.collection(db, 'personal'));
+    const ids = snap.docs.map(d => d.id);
+
+    let borrados = 0;
+    const tamanioLote = 50;
+    for (let i = 0; i < ids.length; i += tamanioLote) {
+      const lote = ids.slice(i, i + tamanioLote);
+      await Promise.all(lote.map(id => window._fb.deleteDoc(window._fb.doc(db, 'personal', id))));
+      borrados += lote.length;
+      progreso.textContent = `Borrando... ${Math.min(borrados, ids.length)} / ${ids.length} registros`;
+    }
+
+    await registrarEnAuditoria(
+      'borrar_toda_base_personal', null, usuario.email, null, null,
+      { registrosBorrados: ids.length },
+      `Borrado total de la Base de Personal por ${usuario.email}: ${ids.length} registros`
+    );
+
+    progreso.textContent = `✅ Listo. Se borraron ${ids.length} registros.`;
+    toast('✅ Base de Personal borrada. Puede volver a importar desde cero.', 'ok');
+    cargarDirectorioPersonal();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+    progreso.textContent = '❌ Ocurrió un error, revise la consola.';
+  }
+}
+
+
 
 /* ═════════════════════════════════════════
    PANEL ADMIN — Accesos (ficha por usuario, perfiles, bloqueo)
@@ -8853,6 +9062,9 @@ window.cambiarPaginaAccesos         = cambiarPaginaAccesos;
 window.verAreasSinAcceso            = verAreasSinAcceso;
 window.cerrarModalAreasSinAcceso    = cerrarModalAreasSinAcceso;
 window.exportarAccesos              = exportarAccesos;
+window.borrarTodaLaBasePersonal     = borrarTodaLaBasePersonal;
+window.analizarMapeoAccesos         = analizarMapeoAccesos;
+window.aplicarMapeoAccesos          = aplicarMapeoAccesos;
 window.exportarDirectorioPersonal   = exportarDirectorioPersonal;
 window.abrirModalPerfil             = abrirModalPerfil;
 window.cerrarModalPerfil            = cerrarModalPerfil;
