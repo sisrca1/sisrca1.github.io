@@ -860,14 +860,14 @@ body:not(.dark-mode) .nav-btn.nav-btn-admin.active{
   display:flex;
   flex-wrap:wrap;
   gap:0;
-  background:rgba(0,0,0,.28);
-  border:1px solid rgba(201,162,39,.25);
+  background:linear-gradient(135deg,#0d1b3e 0%,#1a2f5e 50%,#1e3a6e 100%);
+  border:1px solid rgba(201,162,39,.35);
   border-radius:9px;
   overflow:hidden;
   padding:0;
 }
 body.dark-mode #admin-tabs{
-  background:rgba(0,0,0,.35);
+  background:linear-gradient(135deg,#08101f 0%,#0f1a35 50%,#131f40 100%);
   border-color:rgba(232,184,75,.28);
 }
 
@@ -880,7 +880,7 @@ body.dark-mode #admin-tabs{
   border-radius:0 !important;
   padding:10px 16px;
   margin:0;
-  color:#9aa4b5 !important;
+  color:rgba(255,255,255,.82) !important;
   font-family:var(--font-brand);
   font-size:13px;
   font-weight:600;

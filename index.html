@@ -836,7 +836,10 @@
 
             <div id="personal-cambio-lote" style="display:none;margin-bottom:16px;padding:12px 16px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;align-items:center;gap:12px;flex-wrap:wrap;">
               <span id="personal-cambio-lote-info" style="font-size:12px;font-weight:600;color:var(--blue);"></span>
-              <select id="personal-cambio-lote-area" class="form-select" style="max-width:280px;"></select>
+              <div style="position:relative;max-width:280px;">
+                <input type="text" id="personal-cambio-lote-area" class="form-select" autocomplete="off" placeholder="Escriba para buscar un área...">
+                <div id="personal-cambio-lote-area-lista" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shl);max-height:240px;overflow-y:auto;z-index:600;"></div>
+              </div>
               <label style="font-size:12px;font-weight:700;color:var(--blue);display:flex;align-items:center;gap:6px;cursor:pointer;" title="Mueve el mes completo a la nueva área, sin partir días — para cuando el área anterior estaba mal digitada, no fue un traslado real.">
                 <input type="checkbox" id="personal-cambio-lote-es-correccion" onchange="toggleCambioLoteCorreccion()">
                 Es corrección (no traslado)
@@ -1278,7 +1281,10 @@
       </div>
       <div class="form-field">
         <label class="form-label">Área</label>
-        <input type="text" id="modal-personal-area" class="form-select">
+        <div style="position:relative;">
+          <input type="text" id="modal-personal-area" class="form-select" autocomplete="off" placeholder="Escriba para buscar un área...">
+          <div id="modal-personal-area-lista" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shl);max-height:240px;overflow-y:auto;z-index:600;"></div>
+        </div>
       </div>
       <div class="form-field" id="modal-personal-correccion-wrap" style="display:none;">
         <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;">

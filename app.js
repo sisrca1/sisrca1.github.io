@@ -771,7 +771,7 @@ async function guardarCatalogoAreas(lista) {
    COMBOBOX DE ÁREA (buscador reutilizable) — input de texto + lista
    desplegable filtrable, usado en Envíos y en el selector admin de Novedades
 ═════════════════════════════════════════ */
-function crearComboboxArea({ inputId, listaId, onSeleccionar }) {
+function crearComboboxArea({ inputId, listaId, onSeleccionar, permitirNuevo = false, limpiarAlEnfocar = true }) {
   const input = $(inputId);
   const lista = $(listaId);
   if (!input || !lista) return null;
@@ -804,7 +804,9 @@ function crearComboboxArea({ inputId, listaId, onSeleccionar }) {
     if (!coincidencias.length) {
       const vacio = document.createElement('div');
       vacio.style.cssText = 'padding:10px 12px;font-size:13px;color:var(--txt2);';
-      vacio.textContent = 'Ningún área coincide con la búsqueda';
+      vacio.textContent = permitirNuevo
+        ? 'Ningún área coincide — si guarda este texto, se creará como área nueva'
+        : 'Ningún área coincide con la búsqueda';
       lista.appendChild(vacio);
     } else {
       coincidencias.forEach(a => {
@@ -834,14 +836,22 @@ function crearComboboxArea({ inputId, listaId, onSeleccionar }) {
   if (input.dataset.comboboxInit !== '1') {
     input.dataset.comboboxInit = '1';
     input.addEventListener('focus', () => {
-      input.value = ''; // borra el valor por defecto al hacer clic, para buscar de cero
-      renderLista('');
+      // En los comboboxes de selección estricta (área única a elegir de la
+      // lista) se borra para buscar de cero. En los que permiten un valor
+      // nuevo (ej. Base de Personal), NO se borra — se muestra el valor
+      // actual y la lista ya filtrada por él, para no dejar el campo en
+      // blanco si el usuario hace clic y sale sin escribir nada.
+      if (limpiarAlEnfocar) input.value = '';
+      renderLista(input.value);
     });
     input.addEventListener('input', () => renderLista(input.value));
     input.addEventListener('blur', () => {
       setTimeout(() => {
-        // Si quedó escrito algo que no es un área válida, restaurar el valor previo
-        if (!opciones.includes(input.value)) input.value = valorActual;
+        // Si quedó escrito algo que no es un área del catálogo, se restaura el
+        // valor previo — salvo que este combobox permita áreas nuevas
+        // (ej. Base de Personal, donde escribir un área que no existe todavía
+        // la crea en el catálogo al guardar).
+        if (!permitirNuevo && !opciones.includes(input.value)) input.value = valorActual;
         cerrarLista();
       }, 150);
     });
@@ -6046,7 +6056,11 @@ function seleccionarTodosLosFiltradosPersonal() {
 function limpiarSeleccionPersonal() {
   personalSeleccionados.clear();
   renderizarTablaPersonal();
+  const campoArea = $('personal-cambio-lote-area');
+  if (campoArea) { campoArea.value = ''; delete campoArea.dataset.poblado; }
 }
+
+let comboboxAreaCambioLote = null;
 
 function actualizarBarraCambioLote() {
   const barra = $('personal-cambio-lote');
@@ -6057,13 +6071,25 @@ function actualizarBarraCambioLote() {
   barra.style.display = 'flex';
   $('personal-cambio-lote-info').textContent = `${personalSeleccionados.size} agente${personalSeleccionados.size !== 1 ? 's' : ''} seleccionado${personalSeleccionados.size !== 1 ? 's' : ''}`;
 
-  const sel = $('personal-cambio-lote-area');
-  if (sel.dataset.poblado !== '1') {
-    obtenerAreasNovedades().then(areas => {
-      sel.innerHTML = areas.map(a => `<option value="${a}">${a}</option>`).join('');
-      sel.dataset.poblado = '1';
-    });
-  }
+  obtenerAreasNovedades().then(areas => {
+    if (!comboboxAreaCambioLote) {
+      comboboxAreaCambioLote = crearComboboxArea({
+        inputId: 'personal-cambio-lote-area',
+        listaId: 'personal-cambio-lote-area-lista',
+        onSeleccionar: () => {},
+        limpiarAlEnfocar: false
+      });
+    }
+    // Solo se pobla la primera vez que aparece la barra por esta selección —
+    // si el admin ya venía escribiendo un área, no se le borra al agregar/quitar
+    // más agentes a la selección.
+    if ($('personal-cambio-lote-area').dataset.poblado !== '1') {
+      comboboxAreaCambioLote.actualizar(areas, '');
+      $('personal-cambio-lote-area').dataset.poblado = '1';
+    } else {
+      comboboxAreaCambioLote.actualizar(areas, $('personal-cambio-lote-area').value);
+    }
+  });
 }
 
 // El checkbox "Es corrección" y el campo "Día de corte" del cambio en lote
@@ -6151,6 +6177,21 @@ async function aplicarCambioAreaLote() {
 }
 
 let modalPersonalIdEdicion = null;
+let comboboxAreaPersonal = null;
+
+async function poblarComboboxAreaPersonal(areaSeleccionada) {
+  const areasReales = await obtenerAreasNovedades();
+  if (!comboboxAreaPersonal) {
+    comboboxAreaPersonal = crearComboboxArea({
+      inputId: 'modal-personal-area',
+      listaId: 'modal-personal-area-lista',
+      onSeleccionar: () => {}, // crearComboboxArea ya deja el valor escrito en el input
+      permitirNuevo: true, // el admin puede escribir un área que todavía no existe en el catálogo
+      limpiarAlEnfocar: false // no borrar el área actual al hacer clic — mostrarla y filtrar desde ahí
+    });
+  }
+  comboboxAreaPersonal.actualizar(areasReales, areaSeleccionada || '');
+}
 
 
 async function abrirModalPersonal() {
@@ -6162,7 +6203,7 @@ async function abrirModalPersonal() {
   $('modal-personal-grado').value = '';
   $('modal-personal-apellidos').value = '';
   $('modal-personal-nombres').value = '';
-  $('modal-personal-area').value = '';
+  await poblarComboboxAreaPersonal('');
   if ($('modal-personal-corte')) {
     $('modal-personal-corte').value = obtenerFechaParts().dia;
     hide('modal-personal-corte-wrap');
@@ -6184,7 +6225,7 @@ async function editarRegistroPersonal(id) {
   $('modal-personal-grado').value = p.grado || '';
   $('modal-personal-apellidos').value = p.apellidos || '';
   $('modal-personal-nombres').value = p.nombres || '';
-  $('modal-personal-area').value = p.area || '';
+  await poblarComboboxAreaPersonal(p.area || '');
   if ($('modal-personal-es-correccion')) $('modal-personal-es-correccion').checked = false;
   show('modal-personal-correccion-wrap');
   if ($('modal-personal-corte')) {
