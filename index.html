@@ -890,8 +890,15 @@
               <button class="btn-acc btn-acc-ghost" onclick="cargarAccesos()">
                 🔄 Actualizar
               </button>
+              <button class="btn-acc btn-acc-ghost" onclick="migrarAccesosAAreasMultiples()" data-permiso="accesos_gestionar" title="Ejecutar una sola vez: habilita que un correo pueda tener varias áreas asignadas">
+                🧩 Migrar a áreas múltiples
+              </button>
               <input type="file" id="import-accesos-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="importarAccesosDesdeArchivo(event)">
             </div>
+            <p style="font-size:11px;color:var(--txt3);margin:-8px 0 8px;">
+              🧩 <strong>Migrar a áreas múltiples</strong>: prepáralo una sola vez antes de usar la agrupación de
+              áreas. Es seguro presionarlo más de una vez — los accesos ya migrados se saltan solos.
+            </p>
             <p style="font-size:12px;color:var(--txt2);margin:-4px 0 14px;">
               El archivo debe tener una columna de <strong>correo</strong> (o email), una de <strong>área</strong> y,
               opcionalmente, una de <strong>código</strong> — cualquier otra columna se ignora.
@@ -1378,12 +1385,15 @@
         <div id="modal-acceso-codigo-info" style="font-size:11px;margin-top:5px;min-height:14px;"></div>
       </div>
       <div class="form-field">
-        <label class="form-label">Área</label>
+        <label class="form-label">Áreas asignadas</label>
         <div style="position:relative;">
-          <input type="text" id="modal-acceso-area-buscar" class="form-select" autocomplete="off" placeholder="Escriba para buscar un área...">
-          <input type="hidden" id="modal-acceso-area" value="">
+          <input type="text" id="modal-acceso-area-buscar" class="form-select" autocomplete="off" placeholder="Escriba para buscar y agregar un área...">
           <div id="modal-acceso-area-lista" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shl);max-height:240px;overflow-y:auto;z-index:600;"></div>
         </div>
+        <div id="modal-acceso-areas-chips" style="margin-top:10px;"></div>
+        <p style="font-size:11px;color:var(--txt3);margin-top:6px;">
+          Puede agregar varias áreas al mismo correo — por ejemplo, para que un solo secretario registre novedades de un grupo de áreas.
+        </p>
       </div>
       <div id="modal-acceso-error" style="display:none;padding:10px 12px;background:var(--red);color:white;border-radius:8px;font-size:12px;margin-bottom:16px;"></div>
       <div class="modal-footer">

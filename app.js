@@ -6430,24 +6430,27 @@ async function cargarAccesos() {
       const correo = data.correo || d.id;
       const codigo = String(data.codigo || '').trim();
       const info = codigo ? mapaPersonal.get(codigo) : null;
+      const areas = Array.isArray(data.areas) && data.areas.length ? data.areas : (data.area ? [data.area] : []);
       return {
         id: d.id,
         correo,
         codigo,
-        area: data.area || '',
+        areas,
+        area: areas[0] || '',   // compatibilidad temporal para pantallas que aún leen `area`
         estado: data.estado !== false,       // si el campo no existe, se asume activo
         perfil: resolverPerfil(correo, permisosPorCorreo.get(String(correo).toLowerCase())),
         nombre: info ? info.texto : '',
       };
     });
 
-    // Ordenado por ÁREA — así los dos grupos de una misma UCT quedan juntos
+    // Ordenado por primera ÁREA — así los correos de un mismo grupo quedan juntos
     accesosCache.sort((a, b) =>
-      (a.area || '').localeCompare(b.area || '', 'es') || (a.correo || '').localeCompare(b.correo || '', 'es')
+      (a.areas[0] || '').localeCompare(b.areas[0] || '', 'es') || (a.correo || '').localeCompare(b.correo || '', 'es')
     );
 
-    // Áreas del catálogo que quedaron sin ningún correo asignado
-    const areasConAcceso = new Set(accesosCache.map(a => String(a.area || '').toLowerCase()));
+    // Áreas del catálogo que quedaron sin ningún correo asignado (mirando todas
+    // las áreas de cada correo, no solo la primera)
+    const areasConAcceso = new Set(accesosCache.flatMap(a => a.areas.map(x => String(x).toLowerCase())));
     accesosAreasSinAcceso = (areasCatalogo || []).filter(a => !areasConAcceso.has(String(a).toLowerCase()));
 
     accesosPagina = 1;
@@ -6464,7 +6467,7 @@ function accesosFiltrados() {
   const q = accesosBusqueda.toLowerCase().trim();
   return accesosCache.filter(a => {
     if (!q) return true;
-    return [a.correo, a.area, a.codigo, a.nombre].some(v => String(v || '').toLowerCase().includes(q));
+    return [a.correo, ...(a.areas || []), a.codigo, a.nombre].some(v => String(v || '').toLowerCase().includes(q));
   });
 }
 
@@ -6526,7 +6529,9 @@ function renderizarAccesos() {
     const esc = s => String(s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
     const meta = [
-      a.area ? `<span style="color:var(--gold);font-weight:700;">📍 ${a.area}</span>` : `<span style="color:var(--red);">Sin área asignada</span>`,
+      a.areas && a.areas.length
+        ? `<span style="color:var(--gold);font-weight:700;">📍 ${a.areas.join('  ·  ')}</span>`
+        : `<span style="color:var(--red);">Sin área asignada</span>`,
       a.codigo ? `CÓD: ${a.codigo}` : `<span style="color:var(--red);">sin código</span>`,
     ].join(' <span style="color:var(--txt3);">|</span> ');
 
@@ -6546,7 +6551,7 @@ function renderizarAccesos() {
         ${puedeGestionar ? `
         <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
           ${esRaiz ? '' : `<button class="btn-acc btn-acc-ghost" style="padding:5px 10px;font-size:11px;" onclick="abrirModalPerfil('${esc(a.correo)}')">Perfil</button>`}
-          <button class="btn-acc btn-acc-blue" style="padding:5px 10px;font-size:11px;" onclick="editarAcceso('${esc(a.id)}','${esc(a.correo)}','${esc(a.area)}','${esc(a.codigo)}')">✎ Editar</button>
+          <button class="btn-acc btn-acc-blue" style="padding:5px 10px;font-size:11px;" onclick="editarAcceso('${esc(a.id)}')">✎ Editar</button>
           ${esRaiz ? '' : `<button class="btn-acc ${a.estado ? 'btn-acc-orange' : 'btn-acc-green'}" style="padding:5px 10px;font-size:11px;" onclick="alternarBloqueoAcceso('${esc(a.id)}')">${a.estado ? '⊘ Bloquear' : '✓ Activar'}</button>`}
           ${esRaiz ? '' : `<button class="btn-acc btn-acc-red" style="padding:5px 10px;font-size:11px;" onclick="eliminarAcceso('${esc(a.id)}')">🗑</button>`}
         </div>` : ''}
@@ -6723,7 +6728,7 @@ async function alternarBloqueoAcceso(docId) {
     await window._fb.updateDoc(window._fb.doc(db, 'accesos', docId), {
       estado: !bloquear, ultimaEdicion: new Date()
     });
-    await registrarEnAuditoria(bloquear ? 'bloquear_acceso' : 'activar_acceso', acceso.area, acceso.correo, null, null, {},
+    await registrarEnAuditoria(bloquear ? 'bloquear_acceso' : 'activar_acceso', (acceso.areas || []).join(', ') || acceso.area, acceso.correo, null, null, {},
       `${bloquear ? 'Bloqueado' : 'Activado'} el acceso de ${acceso.correo}`);
     toast(bloquear ? '✅ Acceso bloqueado' : '✅ Acceso activado', 'ok');
     acceso.estado = !bloquear;
@@ -6736,18 +6741,59 @@ async function alternarBloqueoAcceso(docId) {
 /* ── Alta / edición ── */
 let modalAccesoDocIdEdicion = null; // null = creando nuevo, string = editando existente
 let comboboxAreaAcceso = null;
+let modalAccesoAreasSeleccionadas = []; // áreas agregadas como chips en el modal actual
 
-async function poblarSelectAreaAcceso(areaSeleccionada) {
-  const areasReales = await obtenerAreasNovedades();
+async function actualizarOpcionesComboboxAcceso() {
+  const todas = await obtenerAreasNovedades();
+  // las ya agregadas como chip se sacan de las sugerencias, para no poder duplicarlas
+  const disponibles = todas.filter(a => !modalAccesoAreasSeleccionadas.includes(a));
+  comboboxAreaAcceso.actualizar(disponibles, '');
+}
+
+function renderizarChipsAreaAcceso() {
+  const cont = $('modal-acceso-areas-chips');
+  if (!cont) return;
+  if (!modalAccesoAreasSeleccionadas.length) {
+    cont.innerHTML = `<span style="font-size:12px;color:var(--txt3);">Ninguna área agregada todavía</span>`;
+    return;
+  }
+  const esc = s => String(s).replace(/'/g, "\\'");
+  cont.innerHTML = modalAccesoAreasSeleccionadas.map(a => `
+    <span style="display:inline-flex;align-items:center;gap:6px;background:var(--blue-l);color:var(--blue-m);padding:4px 6px 4px 10px;border-radius:14px;font-size:12px;font-weight:600;margin:3px 4px 3px 0;">
+      ${a}
+      <button type="button" onclick="quitarAreaModalAcceso('${esc(a)}')" title="Quitar" style="border:none;background:none;cursor:pointer;font-weight:700;color:inherit;padding:0 3px;line-height:1;">✕</button>
+    </span>`).join('');
+}
+
+function agregarAreaModalAcceso(area) {
+  if (!area || modalAccesoAreasSeleccionadas.includes(area)) return;
+  modalAccesoAreasSeleccionadas.push(area);
+  const input = $('modal-acceso-area-buscar');
+  if (input) input.value = '';
+  actualizarOpcionesComboboxAcceso();
+  renderizarChipsAreaAcceso();
+}
+
+function quitarAreaModalAcceso(area) {
+  modalAccesoAreasSeleccionadas = modalAccesoAreasSeleccionadas.filter(a => a !== area);
+  actualizarOpcionesComboboxAcceso();
+  renderizarChipsAreaAcceso();
+}
+
+async function poblarSelectAreaAcceso(areasIniciales) {
+  modalAccesoAreasSeleccionadas = Array.isArray(areasIniciales)
+    ? [...areasIniciales].filter(Boolean)
+    : (areasIniciales ? [areasIniciales] : []);
+
   if (!comboboxAreaAcceso) {
     comboboxAreaAcceso = crearComboboxArea({
       inputId: 'modal-acceso-area-buscar',
       listaId: 'modal-acceso-area-lista',
-      onSeleccionar: (area) => { $('modal-acceso-area').value = area; }
+      onSeleccionar: (area) => agregarAreaModalAcceso(area)
     });
   }
-  comboboxAreaAcceso.actualizar(areasReales, areaSeleccionada || '');
-  $('modal-acceso-area').value = areaSeleccionada || '';
+  await actualizarOpcionesComboboxAcceso();
+  renderizarChipsAreaAcceso();
 }
 
 /* Al escribir el código en el modal, muestra a quién corresponde. */
@@ -6769,9 +6815,9 @@ async function verificarCodigoAcceso() {
 
 async function mostrarFormAcceso() {
   modalAccesoDocIdEdicion = null;
-  await poblarSelectAreaAcceso();
+  await poblarSelectAreaAcceso([]);
   $('modal-acceso-titulo').textContent = 'Nuevo Acceso';
-  $('modal-acceso-sub').textContent = 'Asigne un código y un área a este correo';
+  $('modal-acceso-sub').textContent = 'Asigne un código y una o varias áreas a este correo';
   $('modal-acceso-correo').value = '';
   $('modal-acceso-correo').disabled = false;
   if ($('modal-acceso-codigo')) $('modal-acceso-codigo').value = '';
@@ -6781,16 +6827,21 @@ async function mostrarFormAcceso() {
   $('modal-acceso-correo').focus();
 }
 
-async function editarAcceso(docId, correoActual, areaAsignada, codigoActual) {
+// Recibe solo el docId y busca el resto en accesosCache — evita tener que
+// serializar un arreglo de áreas dentro de un atributo onclick en el HTML.
+async function editarAcceso(docId) {
+  const acceso = accesosCache.find(a => a.id === docId);
+  if (!acceso) { toast('❌ No se encontró ese acceso', 'err'); return; }
+
   modalAccesoDocIdEdicion = docId;
-  await poblarSelectAreaAcceso(areaAsignada);
+  await poblarSelectAreaAcceso(acceso.areas || []);
   $('modal-acceso-titulo').textContent = 'Editar Acceso';
-  $('modal-acceso-sub').textContent = 'Cambie el correo, el código o el área asignada';
-  $('modal-acceso-correo').value = correoActual || docId;
+  $('modal-acceso-sub').textContent = 'Cambie el correo, el código o las áreas asignadas';
+  $('modal-acceso-correo').value = acceso.correo || docId;
   $('modal-acceso-correo').disabled = false; // el correo ahora sí se puede editar
-  if ($('modal-acceso-codigo')) $('modal-acceso-codigo').value = codigoActual || '';
+  if ($('modal-acceso-codigo')) $('modal-acceso-codigo').value = acceso.codigo || '';
   if ($('modal-acceso-codigo-info')) $('modal-acceso-codigo-info').textContent = '';
-  if (codigoActual) verificarCodigoAcceso();
+  if (acceso.codigo) verificarCodigoAcceso();
   hide('modal-acceso-error');
   $('modal-acceso').style.display = 'flex';
 }
@@ -6802,7 +6853,7 @@ function cerrarModalAcceso() {
 
 async function confirmarGuardarAcceso() {
   const correo = $('modal-acceso-correo').value.trim();
-  const area = $('modal-acceso-area').value;
+  const areas = [...modalAccesoAreasSeleccionadas];
   const codigo = ($('modal-acceso-codigo')?.value || '').trim();
   const errorEl = $('modal-acceso-error');
 
@@ -6811,20 +6862,21 @@ async function confirmarGuardarAcceso() {
     show('modal-acceso-error');
     return;
   }
-  if (!area) {
-    errorEl.textContent = 'Elija un área';
+  if (!areas.length) {
+    errorEl.textContent = 'Agregue al menos un área';
     show('modal-acceso-error');
     return;
   }
 
-  await guardarAcceso(correo, area, codigo, modalAccesoDocIdEdicion);
+  await guardarAcceso(correo, areas, codigo, modalAccesoDocIdEdicion);
   cerrarModalAcceso();
 }
 
-async function guardarAcceso(correo, area, codigo, docIdAnterior = null) {
+async function guardarAcceso(correo, areas, codigo, docIdAnterior = null) {
   try {
     const correoNorm = correo.toLowerCase().trim();
     const accesoRef = window._fb.doc(db, 'accesos', correoNorm);
+    const areasLimpias = [...new Set((Array.isArray(areas) ? areas : [areas]).filter(Boolean))];
 
     // Está editando un acceso existente y cambió el correo: el correo es el ID
     // del documento en Firestore, así que no se puede "renombrar" — hay que
@@ -6843,19 +6895,22 @@ async function guardarAcceso(correo, area, codigo, docIdAnterior = null) {
       }
 
       const datosAnteriores = snapAnterior.data();
+      const areaActivaPrevia = datosAnteriores.areaActiva;
       await window._fb.setDoc(accesoRef, {
         ...datosAnteriores,
         correo: correoNorm,
         codigo: String(codigo || '').trim(),
-        area: area,
+        areas: areasLimpias,
+        area: areasLimpias[0] || '', // compatibilidad temporal — se retira cuando todo el sistema lea `areas`
+        areaActiva: areasLimpias.includes(areaActivaPrevia) ? areaActivaPrevia : (areasLimpias[0] || null),
         ultimaEdicion: new Date()
       });
       await window._fb.deleteDoc(refAnterior);
 
       await registrarEnAuditoria(
-        'editar_acceso', area, correoNorm, null, null,
+        'editar_acceso', areasLimpias.join(', '), correoNorm, null, null,
         { codigo, correoAnterior: docIdAnterior },
-        `Acceso con correo cambiado: ${docIdAnterior} → ${correoNorm} (área ${area})`
+        `Acceso con correo cambiado: ${docIdAnterior} → ${correoNorm} (áreas: ${areasLimpias.join(', ')})`
       );
 
       toast(`✅ Acceso actualizado — correo cambiado a ${correoNorm}`, 'ok');
@@ -6864,13 +6919,19 @@ async function guardarAcceso(correo, area, codigo, docIdAnterior = null) {
     }
 
     // Un solo registro por correo (usando el correo como ID) — si la persona ya tenía
-    // acceso y rota de área, esto ACTUALIZA su área en vez de crear un duplicado.
+    // acceso y se le cambian las áreas, esto ACTUALIZA su lista en vez de crear un duplicado.
     const existente = await window._fb.getDoc(accesoRef);
+    const areaActivaPrevia = existente.exists() ? existente.data().areaActiva : null;
+    const areasAnteriores = existente.exists()
+      ? (Array.isArray(existente.data().areas) ? existente.data().areas : (existente.data().area ? [existente.data().area] : []))
+      : [];
 
     await window._fb.setDoc(accesoRef, {
       correo: correoNorm,
       codigo: String(codigo || '').trim(),
-      area: area,
+      areas: areasLimpias,
+      area: areasLimpias[0] || '', // compatibilidad temporal — se retira cuando todo el sistema lea `areas`
+      areaActiva: areasLimpias.includes(areaActivaPrevia) ? areaActivaPrevia : (areasLimpias[0] || null),
       estado: existente.exists() ? (existente.data().estado !== false) : true,
       fechaCreacion: existente.exists() ? existente.data().fechaCreacion : new Date(),
       ultimaEdicion: new Date()
@@ -6878,10 +6939,10 @@ async function guardarAcceso(correo, area, codigo, docIdAnterior = null) {
 
     await registrarEnAuditoria(
       existente.exists() ? 'editar_acceso' : 'crear_acceso',
-      area, correoNorm, null, null, { codigo },
+      areasLimpias.join(', '), correoNorm, null, null, { codigo },
       existente.exists()
-        ? `Acceso actualizado: ${correoNorm} → ${area} (antes: ${existente.data().area})`
-        : `Nuevo acceso: ${correoNorm} → ${area}`
+        ? `Acceso actualizado: ${correoNorm} → ${areasLimpias.join(', ')} (antes: ${areasAnteriores.join(', ') || '(sin área)'})`
+        : `Nuevo acceso: ${correoNorm} → ${areasLimpias.join(', ')}`
     );
 
     toast(`✅ Acceso ${existente.exists() ? 'actualizado' : 'creado'}`, 'ok');
@@ -6892,12 +6953,60 @@ async function guardarAcceso(correo, area, codigo, docIdAnterior = null) {
   }
 }
 
+/* ── Migración de un solo uso: accesos.area (string) → accesos.areas (arreglo) ──
+   Habilita que un correo tenga varias áreas asignadas (agrupación de
+   secretarías). Es seguro ejecutarla más de una vez: los documentos que ya
+   tienen `areas` se saltan, así que nunca duplica ni pisa una agrupación que
+   ya se haya armado a mano. Conserva el campo `area` original — no se borra
+   en este paso, para no romper pantallas que todavía no fueron actualizadas. */
+async function migrarAccesosAAreasMultiples() {
+  if (!(await confirmarAccion(
+    'Esto prepara todos los accesos existentes para poder asignarles varias áreas. ' +
+    'Es seguro ejecutarlo más de una vez. ¿Continuar?',
+    'Migrar a áreas múltiples'
+  ))) return;
+
+  try {
+    const snap = await window._fb.getDocs(window._fb.collection(db, 'accesos'));
+
+    let migrados = 0, saltados = 0, sinArea = 0;
+
+    for (const docSnap of snap.docs) {
+      const data = docSnap.data();
+
+      if (Array.isArray(data.areas)) { saltados++; continue; }
+
+      const areaOriginal = (data.area || '').trim();
+      if (!areaOriginal) sinArea++;
+
+      await window._fb.setDoc(
+        window._fb.doc(db, 'accesos', docSnap.id),
+        { areas: areaOriginal ? [areaOriginal] : [], areaActiva: areaOriginal || null },
+        { merge: true }
+      );
+      migrados++;
+    }
+
+    await registrarEnAuditoria(
+      'migrar_areas_multiples', null, usuario.email, null, null,
+      { migrados, saltados, sinArea },
+      `Migración a áreas múltiples: ${migrados} migrados, ${saltados} ya estaban migrados, ${sinArea} sin área original`
+    );
+
+    toast(`✅ Migración completa: ${migrados} migrados, ${saltados} ya estaban listos${sinArea ? `, ⚠️ ${sinArea} sin área` : ''}`, 'ok');
+    cargarAccesos();
+
+  } catch (e) {
+    toast('Error en la migración: ' + e.message, 'err');
+  }
+}
+
 async function eliminarAcceso(docId) {
   const acceso = accesosCache.find(a => a.id === docId);
   if (!(await confirmarAccion(`¿Eliminar el acceso de ${acceso ? (acceso.nombre || acceso.correo) : docId}?`, 'Eliminar acceso'))) return;
   try {
     await window._fb.deleteDoc(window._fb.doc(db, 'accesos', docId));
-    await registrarEnAuditoria('eliminar_acceso', acceso?.area || null, acceso?.correo || docId, null, null, {},
+    await registrarEnAuditoria('eliminar_acceso', (acceso?.areas || []).join(', ') || acceso?.area || null, acceso?.correo || docId, null, null, {},
       `Acceso eliminado: ${acceso?.correo || docId}`);
     toast('✅ Acceso eliminado', 'ok');
     cargarAccesos();
@@ -7020,10 +7129,19 @@ async function confirmarImportarAccesos() {
       const correoNorm = fila.correo.toLowerCase().trim();
       const accesoRef = window._fb.doc(db, 'accesos', correoNorm);
       const existente = await window._fb.getDoc(accesoRef);
+      const areasExistentes = existente.exists()
+        ? (Array.isArray(existente.data().areas) ? existente.data().areas : (existente.data().area ? [existente.data().area] : []))
+        : [];
+      // Suma el área del archivo a las que ya tenía (no las reemplaza) — así
+      // importar un Excel no desarma una agrupación de áreas hecha a mano.
+      const areasFinal = [...new Set([...areasExistentes, fila.area].filter(Boolean))];
+      const areaActivaPrevia = existente.exists() ? existente.data().areaActiva : null;
       await window._fb.setDoc(accesoRef, {
         correo: correoNorm,
         codigo: fila.codigo || (existente.exists() ? (existente.data().codigo || '') : ''),
-        area: fila.area,
+        areas: areasFinal,
+        area: areasFinal[0] || '', // compatibilidad temporal
+        areaActiva: areasFinal.includes(areaActivaPrevia) ? areaActivaPrevia : (areasFinal[0] || null),
         estado: existente.exists() ? (existente.data().estado !== false) : true,
         fechaCreacion: existente.exists() ? existente.data().fechaCreacion : new Date(),
         ultimaEdicion: new Date()
@@ -8363,7 +8481,9 @@ window.toggleAreaSobrescribirBackup  = toggleAreaSobrescribirBackup;
 window.cerrarModalRestaurarBackup    = cerrarModalRestaurarBackup;
 window.confirmarRestaurarBackup      = confirmarRestaurarBackup;
 window.guardarAcceso                = guardarAcceso;
+window.quitarAreaModalAcceso        = quitarAreaModalAcceso;
 window.eliminarAcceso               = eliminarAcceso;
+window.migrarAccesosAAreasMultiples = migrarAccesosAAreasMultiples;
 window.editarAcceso                 = editarAcceso;
 window.cargarAccesos                = cargarAccesos;
 window.buscarAccesos                = buscarAccesos;
