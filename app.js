@@ -249,7 +249,7 @@ const PERMISOS_DISPONIBLES = [
     { key: 'desbloqueos_aprobar',       label: 'Aprobar / rechazar solicitudes' },
     { key: 'desbloqueos_directo',       label: 'Desbloqueo directo (sin esperar solicitud)' },
   ]},
-  { tab: 'resumen', tabLabel: '📊 Resumen General', acciones: [
+  { tab: 'resumen', tabLabel: '📊 Reportes', acciones: [
     { key: 'resumen_ver',               label: 'Ver resumen general' },
     { key: 'resumen_exportar',          label: 'Exportar resumen a Excel' },
   ]},
@@ -2214,7 +2214,7 @@ async function generarReportePrueba() {
 }
 
 function aplicarVisibilidadTabsAdmin() {
-  const tabsMap = { envios: '📤 Envíos', importar: '📥 Importar BD', accesos: '🔐 Accesos', auditoria: '📋 Auditoría', desbloqueos: '🔓 Desbloqueos', resumen: '📊 Resumen General' };
+  const tabsMap = { envios: '📤 Envíos', importar: '📥 Importar BD', accesos: '🔐 Accesos', auditoria: '📋 Auditoría', desbloqueos: '🔓 Desbloqueos', resumen: '📊 Reportes' };
   let primeraVisible = null;
 
   document.querySelectorAll('.admin-tab').forEach(tab => {
@@ -2795,40 +2795,43 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
 
   ws.addRow([]);
 
-  // ── Certificación ──
-  const filaCertTituloNum = ws.rowCount + 1;
-  ws.mergeCells(filaCertTituloNum, 1, filaCertTituloNum, numCols);
-  const filaCertTitulo = ws.getRow(filaCertTituloNum);
-  filaCertTitulo.getCell(1).value = 'CERTIFICACIÓN';
-  filaCertTitulo.eachCell({ includeEmpty: true }, c => estiloNavy(c));
+  // ── Certificación — se omite en el Reporte General (solo lo usan
+  //    Administrador y Supervisor como resumen interno, sin firmas) ──
+  if (!esGeneral) {
+    const filaCertTituloNum = ws.rowCount + 1;
+    ws.mergeCells(filaCertTituloNum, 1, filaCertTituloNum, numCols);
+    const filaCertTitulo = ws.getRow(filaCertTituloNum);
+    filaCertTitulo.getCell(1).value = 'CERTIFICACIÓN';
+    filaCertTitulo.eachCell({ includeEmpty: true }, c => estiloNavy(c));
 
-  const mitad = Math.floor(numCols / 2);
-  const filaLabelsNum = filaCertTituloNum + 1;
-  ws.mergeCells(filaLabelsNum, 1, filaLabelsNum, mitad);
-  ws.mergeCells(filaLabelsNum, mitad + 1, filaLabelsNum, numCols);
-  const filaCertLabels = ws.getRow(filaLabelsNum);
-  filaCertLabels.getCell(1).value = 'ELABORADO POR';
-  filaCertLabels.getCell(mitad + 1).value = 'RESPONSABLE';
-  filaCertLabels.eachCell({ includeEmpty: true }, c => estiloNavy(c));
+    const mitad = Math.floor(numCols / 2);
+    const filaLabelsNum = filaCertTituloNum + 1;
+    ws.mergeCells(filaLabelsNum, 1, filaLabelsNum, mitad);
+    ws.mergeCells(filaLabelsNum, mitad + 1, filaLabelsNum, numCols);
+    const filaCertLabels = ws.getRow(filaLabelsNum);
+    filaCertLabels.getCell(1).value = 'ELABORADO POR';
+    filaCertLabels.getCell(mitad + 1).value = 'RESPONSABLE';
+    filaCertLabels.eachCell({ includeEmpty: true }, c => estiloNavy(c));
 
-  const filaValoresNum = filaLabelsNum + 1;
-  ws.mergeCells(filaValoresNum, 1, filaValoresNum, mitad);
-  ws.mergeCells(filaValoresNum, mitad + 1, filaValoresNum, numCols);
-  const filaCertValores = ws.getRow(filaValoresNum);
-  filaCertValores.getCell(1).value = elaboradoPor;
-  filaCertValores.getCell(mitad + 1).value = responsable;
-  filaCertValores.eachCell({ includeEmpty: true }, c => estiloAmarillo(c));
-  filaCertValores.height = 22;
+    const filaValoresNum = filaLabelsNum + 1;
+    ws.mergeCells(filaValoresNum, 1, filaValoresNum, mitad);
+    ws.mergeCells(filaValoresNum, mitad + 1, filaValoresNum, numCols);
+    const filaCertValores = ws.getRow(filaValoresNum);
+    filaCertValores.getCell(1).value = elaboradoPor;
+    filaCertValores.getCell(mitad + 1).value = responsable;
+    filaCertValores.eachCell({ includeEmpty: true }, c => estiloAmarillo(c));
+    filaCertValores.height = 22;
 
-  // ── Recuadro de firma (en blanco) ──
-  const filaFirmaNum = filaValoresNum + 1;
-  ws.mergeCells(filaFirmaNum, 1, filaFirmaNum, mitad);
-  ws.mergeCells(filaFirmaNum, mitad + 1, filaFirmaNum, numCols);
-  const filaFirma = ws.getRow(filaFirmaNum);
-  filaFirma.eachCell({ includeEmpty: true }, c => {
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLANCO } };
-  });
-  filaFirma.height = 45;
+    // ── Recuadro de firma (en blanco) ──
+    const filaFirmaNum = filaValoresNum + 1;
+    ws.mergeCells(filaFirmaNum, 1, filaFirmaNum, mitad);
+    ws.mergeCells(filaFirmaNum, mitad + 1, filaFirmaNum, numCols);
+    const filaFirma = ws.getRow(filaFirmaNum);
+    filaFirma.eachCell({ includeEmpty: true }, c => {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLANCO } };
+    });
+    filaFirma.height = 45;
+  }
 
   // ── Líneas de cuadrícula en toda la hoja ──
   const bordeDelgado = { style: 'thin', color: { argb: 'FF999999' } };
@@ -2839,7 +2842,7 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
   });
 
   // ── Nota de pie de página discreta (no institucional, solo trazabilidad técnica) ──
-  const filaFooterNum = filaFirmaNum + 2;
+  const filaFooterNum = ws.rowCount + 2;
   ws.mergeCells(filaFooterNum, 1, filaFooterNum, numCols);
   const filaFooter = ws.getCell(filaFooterNum, 1);
   const fechaGenExcel = new Date().toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -3040,44 +3043,47 @@ async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsab
 
   y += 6;
 
-  // ── Certificación ──
-  doc.setFillColor(...NAVY);
-  doc.rect(10, y, anchoPagina - 20, 6, 'FD');
-  doc.setTextColor(...BLANCO);
-  doc.setFontSize(9);
-  doc.setFont(undefined, 'bold');
-  doc.text('CERTIFICACIÓN', anchoPagina / 2, y + 4.2, { align: 'center' });
-  y += 6;
+  // ── Certificación — se omite en el Reporte General (solo lo usan
+  //    Administrador y Supervisor como resumen interno, sin firmas) ──
+  if (!esGeneral) {
+    doc.setFillColor(...NAVY);
+    doc.rect(10, y, anchoPagina - 20, 6, 'FD');
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    doc.text('CERTIFICACIÓN', anchoPagina / 2, y + 4.2, { align: 'center' });
+    y += 6;
 
-  const mitadPagina = anchoPagina / 2;
-  const anchoCol = mitadPagina - 12;
+    const mitadPagina = anchoPagina / 2;
+    const anchoCol = mitadPagina - 12;
 
-  // Fila de etiquetas
-  doc.setFillColor(...NAVY);
-  doc.rect(10, y, anchoCol, 6, 'FD');
-  doc.rect(mitadPagina + 2, y, anchoCol, 6, 'FD');
-  doc.setTextColor(...BLANCO);
-  doc.setFontSize(8);
-  doc.text('ELABORADO POR', 10 + anchoCol / 2, y + 4.2, { align: 'center' });
-  doc.text('RESPONSABLE', mitadPagina + 2 + anchoCol / 2, y + 4.2, { align: 'center' });
-  y += 6;
+    // Fila de etiquetas
+    doc.setFillColor(...NAVY);
+    doc.rect(10, y, anchoCol, 6, 'FD');
+    doc.rect(mitadPagina + 2, y, anchoCol, 6, 'FD');
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(8);
+    doc.text('ELABORADO POR', 10 + anchoCol / 2, y + 4.2, { align: 'center' });
+    doc.text('RESPONSABLE', mitadPagina + 2 + anchoCol / 2, y + 4.2, { align: 'center' });
+    y += 6;
 
-  // Fila de valores
-  doc.setFillColor(...AMARILLO);
-  doc.rect(10, y, anchoCol, 8, 'FD');
-  doc.rect(mitadPagina + 2, y, anchoCol, 8, 'FD');
-  doc.setTextColor(0, 0, 0);
-  doc.setFont(undefined, 'normal');
-  doc.setFontSize(9);
-  doc.text(elaboradoPor, 10 + anchoCol / 2, y + 5.2, { align: 'center' });
-  doc.text(responsable, mitadPagina + 2 + anchoCol / 2, y + 5.2, { align: 'center' });
-  y += 8;
+    // Fila de valores
+    doc.setFillColor(...AMARILLO);
+    doc.rect(10, y, anchoCol, 8, 'FD');
+    doc.rect(mitadPagina + 2, y, anchoCol, 8, 'FD');
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(9);
+    doc.text(elaboradoPor, 10 + anchoCol / 2, y + 5.2, { align: 'center' });
+    doc.text(responsable, mitadPagina + 2 + anchoCol / 2, y + 5.2, { align: 'center' });
+    y += 8;
 
-  // ── Recuadro de firma (en blanco) ──
-  doc.setDrawColor(0, 0, 0);
-  doc.setFillColor(255, 255, 255);
-  doc.rect(10, y, anchoCol, 18, 'FD');
-  doc.rect(mitadPagina + 2, y, anchoCol, 18, 'FD');
+    // ── Recuadro de firma (en blanco) ──
+    doc.setDrawColor(0, 0, 0);
+    doc.setFillColor(255, 255, 255);
+    doc.rect(10, y, anchoCol, 18, 'FD');
+    doc.rect(mitadPagina + 2, y, anchoCol, 18, 'FD');
+  }
 
   // ── Contador de páginas (pie de cada hoja) ──
   const totalPaginas = doc.internal.getNumberOfPages();
@@ -8076,12 +8082,9 @@ function poblarSelectoresResumen(prefix = 'resumen') {
 async function generarReporteGeneralEfectivos() {
   const mes = $('resumen-efectivo-mes').value;
   const anio = $('resumen-efectivo-anio').value;
-  const elaboradoPor = $('resumen-efectivo-elaborado-por').value.trim();
-  const responsable = $('resumen-efectivo-responsable').value.trim();
   const btn = $('btn-reporte-general-efectivo');
 
   if (!mes || !anio) { toast('Elegí mes y año', 'err'); return; }
-  if (!elaboradoPor || !responsable) { toast('Elegí "Elaborado por" y "Responsable"', 'err'); return; }
 
   const periodo = `${anio}-${mes}`;
   const txtOriginal = btn.textContent;
@@ -8110,8 +8113,9 @@ async function generarReporteGeneralEfectivos() {
 
     const dataGeneral = { agentes: ordenarAgentesPorGrado(todosLosAgentes) };
 
-    await exportarNovedadesExcel(dataGeneral, 'REPORTE GENERAL', periodo, elaboradoPor, responsable, true);
-    await exportarNovedadesPDF(dataGeneral, 'REPORTE GENERAL', periodo, elaboradoPor, responsable, true);
+    // esGeneral=true → sin sección de firmas, no requiere "Elaborado por"/"Responsable"
+    await exportarNovedadesExcel(dataGeneral, 'REPORTE GENERAL', periodo, '', '', true);
+    await exportarNovedadesPDF(dataGeneral, 'REPORTE GENERAL', periodo, '', '', true);
 
     toast(`✅ Reporte general generado — ${todosLosAgentes.length} efectivos de ${areasConDatos} área${areasConDatos === 1 ? '' : 's'}`, 'ok');
   } catch (e) {

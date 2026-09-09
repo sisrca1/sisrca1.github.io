@@ -606,7 +606,7 @@
           <button class="btn-acc btn-acc-blue admin-tab" data-tab="accesos">🔐 Accesos</button>
           <button class="btn-acc btn-acc-blue admin-tab" data-tab="auditoria">📋 Auditoría</button>
           <button class="btn-acc btn-acc-blue admin-tab" data-tab="desbloqueos">🔓 Desbloqueos</button>
-          <button class="btn-acc btn-acc-blue admin-tab" data-tab="resumen">📊 Resumen General</button>
+          <button class="btn-acc btn-acc-blue admin-tab" data-tab="resumen">📊 Reportes</button>
           <button class="btn-acc btn-acc-blue admin-tab" data-tab="areas" id="tab-btn-areas" style="display:none;">🗺️ Áreas</button>
           <button class="btn-acc btn-acc-blue admin-tab" data-tab="config" id="tab-btn-config" style="display:none;">⚙️ Configuración</button>
         </div>
@@ -1072,7 +1072,8 @@
             <div class="sec-titulo">📊 Reporte General por Efectivo (todas las áreas juntas)</div>
             <p style="font-size:12px;color:var(--txt2);margin:4px 0 14px;">
               Un solo documento con todo el personal de la CTE, día por día — igual al informe de cada área,
-              pero consolidado, sin separar por área. Disponible para Administrador y Supervisor.
+              pero consolidado, sin separar por área. Es un resumen interno de lo que está cargado en la
+              plataforma, sin sección de firmas. Disponible para Administrador y Supervisor.
             </p>
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
               <div class="form-field" style="margin-bottom:0;">
@@ -1082,14 +1083,6 @@
               <div class="form-field" style="margin-bottom:0;">
                 <label class="form-label">Año</label>
                 <select id="resumen-efectivo-anio" class="filtro-select"></select>
-              </div>
-              <div class="form-field" style="margin-bottom:0;">
-                <label class="form-label">Elaborado por</label>
-                <input type="text" id="resumen-efectivo-elaborado-por" class="filtro-input" readonly placeholder="Clic para elegir..." onclick="abrirSelectorPersona('resumen-efectivo-elaborado-por')" style="cursor:pointer;">
-              </div>
-              <div class="form-field" style="margin-bottom:0;">
-                <label class="form-label">Responsable</label>
-                <input type="text" id="resumen-efectivo-responsable" class="filtro-input" readonly placeholder="Clic para elegir..." onclick="abrirSelectorPersona('resumen-efectivo-responsable')" style="cursor:pointer;">
               </div>
               <button class="btn-acc btn-acc-blue" id="btn-reporte-general-efectivo" onclick="generarReporteGeneralEfectivos()" style="margin-top:18px;">
                 📄 Generar Reporte General (Excel + PDF)
