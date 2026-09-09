@@ -118,7 +118,7 @@ async function initFirebase() {
   try {
     const { initializeApp }
       = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-    const { getFirestore, collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch }
+    const { getFirestore, collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch, onSnapshot }
       = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
     const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
       getRedirectResult, signOut, onAuthStateChanged,
@@ -131,7 +131,7 @@ async function initFirebase() {
     auth = getAuth(app);
 
     window._fb = {
-      collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch,
+      collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch, onSnapshot,
       GoogleAuthProvider, signInWithPopup, signInWithRedirect,
       getRedirectResult, signOut, onAuthStateChanged,
       createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -149,17 +149,7 @@ async function initFirebase() {
         await cargarPermisoUsuario();
         actualizarNav();
 
-        // Novedades/Envíos son para personal operativo (con área asignada en Accesos).
-        // Si la persona tiene algún permiso del Panel de Control pero NO tiene área
-        // asignada, no es personal operativo — no debe ver esas dos pestañas,
-        // sin importar qué tipo de permiso se le haya dado.
-        const tieneArea = permisoUsuario ? await usuarioTieneAreaAsignada() : true;
-        const debeVerOperativas = esAdmin() || tieneArea;
-
-        debeVerOperativas ? show('nb-novedades') : hide('nb-novedades');
-        debeVerOperativas ? show('nb-envios') : hide('nb-envios');
-        tieneAccesoPanel() ? show('nb-admin') : hide('nb-admin');   // Panel de control: admin o con permiso
-        (esSupervisor() || tienePermisoAccion('actividad_ver')) ? show('nb-reportes') : hide('nb-reportes');
+        const debeVerOperativas = await actualizarVisibilidadNav();
 
         if (!debeVerOperativas && tieneAccesoPanel()) {
           irAdmin();
@@ -168,7 +158,13 @@ async function initFirebase() {
         } else {
           irNovedades();
         }
+
+        // Tiempo real sobre el propio permiso y acceso: si el admin cambia algo
+        // mientras esta pestaña sigue abierta, se entera sin recargar la página.
+        iniciarListenerPermisoUsuario();
+        iniciarListenerAccesoUsuario();
       } else {
+        detenerListenersPropios();
         usuario = null;
         permisoUsuario = null;
         actualizarNav();
@@ -317,6 +313,106 @@ async function usuarioTieneAreaAsignada() {
   } catch(e) {
     return false;
   }
+}
+
+// Novedades/Envíos son para personal operativo (con área asignada en Accesos).
+// Si la persona tiene algún permiso del Panel de Control pero NO tiene área
+// asignada, no es personal operativo — no debe ver esas dos pestañas, sin
+// importar qué tipo de permiso se le haya dado. Devuelve si debe ver las
+// pestañas operativas, para que quien la llama decida si además navega.
+async function actualizarVisibilidadNav() {
+  const tieneArea = permisoUsuario ? await usuarioTieneAreaAsignada() : true;
+  const debeVerOperativas = esAdmin() || tieneArea;
+
+  debeVerOperativas ? show('nb-novedades') : hide('nb-novedades');
+  debeVerOperativas ? show('nb-envios') : hide('nb-envios');
+  tieneAccesoPanel() ? show('nb-admin') : hide('nb-admin');   // Panel de control: admin o con permiso
+  (esSupervisor() || tienePermisoAccion('actividad_ver')) ? show('nb-reportes') : hide('nb-reportes');
+
+  return debeVerOperativas;
+}
+
+/* ══════════════════════════════════
+   TIEMPO REAL sobre el propio permiso/acceso
+   ──────────────────────────────────
+   Antes, el permiso (permisos_panel) y el área asignada (accesos) se leían
+   UNA SOLA VEZ, al iniciar sesión. Si el administrador quitaba un permiso,
+   bloqueaba el acceso o cambiaba las áreas de alguien que ya tenía la
+   pestaña abierta, esa persona no se enteraba hasta recargar la página —
+   aunque, ojo, las reglas de Firestore igual rechazaban cualquier intento
+   de guardar algo que ya no le correspondía; solo la PANTALLA quedaba
+   desactualizada, no la seguridad real.
+   Ahora se deja un oyente (onSnapshot) sobre su propio documento en cada
+   colección, así el cambio le llega solo, sin recargar nada.
+══════════════════════════════════ */
+let unsubPermisoUsuario = null;
+let unsubAccesoUsuario  = null;
+
+function detenerListenersPropios() {
+  if (unsubPermisoUsuario) { unsubPermisoUsuario(); unsubPermisoUsuario = null; }
+  if (unsubAccesoUsuario)  { unsubAccesoUsuario();  unsubAccesoUsuario = null; }
+}
+
+function iniciarListenerPermisoUsuario() {
+  if (!usuario || esAdmin()) return; // el superadmin no tiene documento de permiso
+  if (unsubPermisoUsuario) unsubPermisoUsuario();
+
+  const ref = window._fb.doc(db, 'permisos_panel', usuario.email.toLowerCase());
+  unsubPermisoUsuario = window._fb.onSnapshot(ref, async (snap) => {
+    const nuevo = snap.exists() ? snap.data() : null;
+    const eraAlgo = !!permisoUsuario;
+    permisoUsuario = nuevo;
+
+    // Si le quitaron el permiso por completo mientras estaba en el Panel de
+    // Control, sacarla de ahí — ya no tiene nada que ver.
+    if (eraAlgo && !nuevo && vistaActual === 'vista-admin') {
+      toast('🔒 Se le retiró el acceso al Panel de Control', 'err');
+      irNovedades();
+      return;
+    }
+
+    await actualizarVisibilidadNav();
+    aplicarPermisosBotones();
+    if (vistaActual === 'vista-admin') aplicarVisibilidadTabsAdmin();
+  }, (e) => console.warn('Listener de permiso interrumpido:', e.message));
+}
+
+function iniciarListenerAccesoUsuario() {
+  if (!usuario || esAdmin()) return;
+  if (unsubAccesoUsuario) unsubAccesoUsuario();
+
+  const correoNorm = String(usuario.email || '').toLowerCase().trim();
+  const ref = window._fb.doc(db, 'accesos', correoNorm);
+  unsubAccesoUsuario = window._fb.onSnapshot(ref, (snap) => {
+    if (!snap.exists()) return; // sin acceso configurado — el flujo normal ya lo avisa al entrar
+    const acceso = snap.data();
+
+    if (acceso.estado === false) {
+      toast('🔒 Su acceso fue bloqueado. Se cerrará la sesión.', 'err');
+      logout();
+      return;
+    }
+
+    if (vistaActual !== 'vista-novedades') return; // el cambio se aplica solo cuando vuelva a esa pantalla
+
+    const areasNuevas = Array.isArray(acceso.areas) && acceso.areas.length
+      ? acceso.areas
+      : (acceso.area ? [acceso.area] : []);
+
+    if (!areasNuevas.includes(areaActual)) {
+      // Le quitaron el área que tenía activa — salta a otra y recarga la tabla.
+      areaActual = areasNuevas.includes(acceso.areaActiva) ? acceso.areaActiva : (areasNuevas[0] || '');
+      toast(`ℹ️ Sus áreas asignadas cambiaron — ahora en "${areaActual}"`, 'ok');
+      cargarNovedadesActuales();
+    } else if (areasNuevas.length > 1) {
+      // Sigue teniendo la misma área activa, pero puede haberse sumado o
+      // quitado alguna otra — refrescar solo el selector, sin recargar la tabla.
+      poblarSelectorAreaActivaSecretario(areasNuevas, areaActual);
+      show('selector-area-activa-secretario');
+    } else {
+      hide('selector-area-activa-secretario');
+    }
+  }, (e) => console.warn('Listener de acceso interrumpido:', e.message));
 }
 
 // Oculta/deshabilita cualquier elemento con data-permiso="clave" si el usuario no la tiene
@@ -5970,6 +6066,14 @@ function actualizarBarraCambioLote() {
   }
 }
 
+// El checkbox "Es corrección" y el campo "Día de corte" del cambio en lote
+// son igual de excluyentes que en la edición individual.
+function toggleCambioLoteCorreccion() {
+  const esCorreccion = $('personal-cambio-lote-es-correccion')?.checked;
+  const wrap = $('personal-cambio-lote-corte-wrap');
+  if (wrap) wrap.style.display = esCorreccion ? 'none' : 'flex';
+}
+
 async function aplicarCambioAreaLote() {
   if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
   const nuevaArea = $('personal-cambio-lote-area').value;
@@ -5977,15 +6081,19 @@ async function aplicarCambioAreaLote() {
   if (personalSeleccionados.size === 0) return;
 
   const periodo = obtenerFechaParts().periodo;
-  const diaCorte = ajustarDiaAlMes(
-    parseInt(($('personal-cambio-lote-corte') || {}).value, 10) || obtenerFechaParts().dia,
-    periodo
-  );
+  const esCorreccion = $('personal-cambio-lote-es-correccion')?.checked || false;
+  // Corrección: mueve el mes ENTERO (diaCorte=1, sin partir días).
+  // Traslado real: respeta el día de corte que eligió el admin.
+  const diaCorte = esCorreccion
+    ? 1
+    : ajustarDiaAlMes(parseInt(($('personal-cambio-lote-corte') || {}).value, 10) || obtenerFechaParts().dia, periodo);
   const areaNuevaSanitizada = sanitizarNombreArea(nuevaArea);
 
   if (!(await confirmarAccion(
-    `¿Cambiar el área de ${personalSeleccionados.size} agente(s) a "${nuevaArea}"?\n\nEn Novedades de este mes, los días antes del ${diaCorte} quedan en su área anterior y desde el ${diaCorte} pasan a la nueva área.`,
-    'Cambiar área en lote'
+    esCorreccion
+      ? `¿Corregir el área de ${personalSeleccionados.size} agente(s) a "${nuevaArea}"?\n\nNo es un traslado: el mes completo de Novedades pasará a la nueva área, sin partir días.`
+      : `¿Cambiar el área de ${personalSeleccionados.size} agente(s) a "${nuevaArea}"?\n\nEn Novedades de este mes, los días antes del ${diaCorte} quedan en su área anterior y desde el ${diaCorte} pasan a la nueva área.`,
+    esCorreccion ? 'Corregir área en lote' : 'Cambiar área en lote'
   ))) return;
 
   try {
@@ -6021,12 +6129,19 @@ async function aplicarCambioAreaLote() {
     }
 
     await registrarEnAuditoria(
-      'cambio_area_lote', areaNuevaSanitizada, usuario.email, null, null,
-      { cantidad: ids.length, diaCorte, partidosEnNovedades: resultadoCorte.procesados },
-      `Cambio de área en lote: ${ids.length} agentes → ${areaNuevaSanitizada} (corte día ${diaCorte}, ${resultadoCorte.procesados} partidos en Novedades de ${periodo})`
+      esCorreccion ? 'corregir_area_lote' : 'cambio_area_lote', areaNuevaSanitizada, usuario.email, null, null,
+      { cantidad: ids.length, diaCorte, partidosEnNovedades: resultadoCorte.procesados, esCorreccion },
+      esCorreccion
+        ? `Corrección de área en lote (no traslado): ${ids.length} agentes → ${areaNuevaSanitizada} (mes ${periodo} completo, ${resultadoCorte.procesados} corregidos en Novedades)`
+        : `Cambio de área en lote: ${ids.length} agentes → ${areaNuevaSanitizada} (corte día ${diaCorte}, ${resultadoCorte.procesados} partidos en Novedades de ${periodo})`
     );
 
-    toast(`✅ ${ids.length} agentes actualizados a "${areaNuevaSanitizada}" · ${resultadoCorte.procesados} partidos en Novedades desde el día ${diaCorte}`, 'ok');
+    toast(
+      esCorreccion
+        ? `✅ ${ids.length} agentes corregidos a "${areaNuevaSanitizada}" · mes ${periodo} completo movido en Novedades`
+        : `✅ ${ids.length} agentes actualizados a "${areaNuevaSanitizada}" · ${resultadoCorte.procesados} partidos en Novedades desde el día ${diaCorte}`,
+      'ok'
+    );
     limpiarSeleccionPersonal();
     cargarDirectorioPersonal();
   } catch(e) {
@@ -6052,6 +6167,8 @@ async function abrirModalPersonal() {
     $('modal-personal-corte').value = obtenerFechaParts().dia;
     hide('modal-personal-corte-wrap');
   }
+  if ($('modal-personal-es-correccion')) $('modal-personal-es-correccion').checked = false;
+  hide('modal-personal-correccion-wrap'); // no aplica al crear un registro nuevo, no hay área anterior que corregir
   hide('modal-personal-error');
   $('modal-personal').style.display = 'flex';
 }
@@ -6068,12 +6185,23 @@ async function editarRegistroPersonal(id) {
   $('modal-personal-apellidos').value = p.apellidos || '';
   $('modal-personal-nombres').value = p.nombres || '';
   $('modal-personal-area').value = p.area || '';
+  if ($('modal-personal-es-correccion')) $('modal-personal-es-correccion').checked = false;
+  show('modal-personal-correccion-wrap');
   if ($('modal-personal-corte')) {
     $('modal-personal-corte').value = obtenerFechaParts().dia;
     show('modal-personal-corte-wrap');
   }
   hide('modal-personal-error');
   $('modal-personal').style.display = 'flex';
+}
+
+// El checkbox "Es corrección" y el campo "Día de corte" son mutuamente
+// excluyentes: una corrección mueve el mes completo, no tiene sentido pedir
+// un día donde partirlo.
+function toggleModalPersonalCorreccion() {
+  const esCorreccion = $('modal-personal-es-correccion')?.checked;
+  if (esCorreccion) hide('modal-personal-corte-wrap');
+  else show('modal-personal-corte-wrap');
 }
 
 function cerrarModalPersonal() {
@@ -6164,12 +6292,19 @@ async function aplicarCortesDeArea(cambios, diaCorte, periodo) {
           if (Number(dia) < diaCorte) diasConservados[dia] = val;
           else diasTrasladados[dia] = val;
         });
-        entradaOrigen.agentes[idx] = {
-          ...ag,
-          grado: c.grado || ag.grado || '',
-          apellidosNombres: nombreCompleto || ag.apellidosNombres || '',
-          novedadesPorDia: diasConservados
-        };
+        if (Object.keys(diasConservados).length === 0) {
+          // No le queda ningún día en la vieja área (corte desde el día 1,
+          // o el mes recién empezaba) — se lo saca del todo, en vez de
+          // dejar una ficha con todos los días en blanco.
+          entradaOrigen.agentes.splice(idx, 1);
+        } else {
+          entradaOrigen.agentes[idx] = {
+            ...ag,
+            grado: c.grado || ag.grado || '',
+            apellidosNombres: nombreCompleto || ag.apellidosNombres || '',
+            novedadesPorDia: diasConservados
+          };
+        }
       }
     }
 
@@ -6249,20 +6384,27 @@ async function guardarRegistroPersonal() {
       ? personalDirectorioCache.find(x => x.id === modalPersonalIdEdicion)
       : null;
     const areaAnterior = registroPrevio ? registroPrevio.area : null;
+    const esCorreccion = $('modal-personal-es-correccion')?.checked || false;
     let movimiento = null;
+    let correccion = null;
     if (areaAnterior && sanitizarNombreArea(areaAnterior) !== areaSanitizada) {
       const periodo = obtenerFechaParts().periodo;
-      const diaCorte = ajustarDiaAlMes(
-        parseInt($('modal-personal-corte').value, 10) || obtenerFechaParts().dia,
-        periodo
-      );
+      // Corrección de error: mueve el mes ENTERO (diaCorte=1, sin partir
+      // días). Traslado real: respeta el día de corte que eligió el admin.
+      const diaCorte = esCorreccion
+        ? 1
+        : ajustarDiaAlMes(parseInt($('modal-personal-corte').value, 10) || obtenerFechaParts().dia, periodo);
       try {
         const resultado = await aplicarCortesDeArea(
           [{ codigo, grado, apellidos, nombres, areaAnterior, areaNueva: areaSanitizada }],
           diaCorte, periodo
         );
         if (resultado.procesados) {
-          movimiento = { desde: sanitizarNombreArea(areaAnterior), hacia: areaSanitizada, periodo, diaCorte };
+          if (esCorreccion) {
+            correccion = { desde: sanitizarNombreArea(areaAnterior), hacia: areaSanitizada, periodo };
+          } else {
+            movimiento = { desde: sanitizarNombreArea(areaAnterior), hacia: areaSanitizada, periodo, diaCorte };
+          }
         }
       } catch(e) {
         console.error('No se pudo partir al agente en Novedades:', e);
@@ -6271,15 +6413,19 @@ async function guardarRegistroPersonal() {
     }
 
     await registrarEnAuditoria(
-      modalPersonalIdEdicion ? 'editar_personal' : 'crear_personal',
-      areaSanitizada, usuario.email, null, null, { codigo, movimiento },
-      `${modalPersonalIdEdicion ? 'Editado' : 'Agregado'} registro de personal: ${codigo} — ${apellidos} ${nombres}${movimiento ? ` · Novedades ${movimiento.periodo}: días 1-${movimiento.diaCorte - 1} en "${movimiento.desde}", desde el ${movimiento.diaCorte} en "${movimiento.hacia}"` : ''}`
+      correccion ? 'corregir_area_personal' : (modalPersonalIdEdicion ? 'editar_personal' : 'crear_personal'),
+      areaSanitizada, usuario.email, null, null, { codigo, movimiento, correccion },
+      correccion
+        ? `Corrección de área (error de digitación, no traslado): ${codigo} — ${apellidos} ${nombres} · de "${correccion.desde}" a "${correccion.hacia}", mes ${correccion.periodo} completo`
+        : `${modalPersonalIdEdicion ? 'Editado' : 'Agregado'} registro de personal: ${codigo} — ${apellidos} ${nombres}${movimiento ? ` · Novedades ${movimiento.periodo}: días 1-${movimiento.diaCorte - 1} en "${movimiento.desde}", desde el ${movimiento.diaCorte} en "${movimiento.hacia}"` : ''}`
     );
 
     toast(
-      movimiento
-        ? `✅ Registro actualizado · en Novedades de ${movimiento.periodo}: hasta el día ${movimiento.diaCorte - 1} en "${movimiento.desde}", desde el ${movimiento.diaCorte} en "${movimiento.hacia}"`
-        : `✅ Registro ${modalPersonalIdEdicion ? 'actualizado' : 'agregado'}`,
+      correccion
+        ? `✅ Área corregida — el mes ${correccion.periodo} completo ahora figura en "${correccion.hacia}"`
+        : movimiento
+          ? `✅ Registro actualizado · en Novedades de ${movimiento.periodo}: hasta el día ${movimiento.diaCorte - 1} en "${movimiento.desde}", desde el ${movimiento.diaCorte} en "${movimiento.hacia}"`
+          : `✅ Registro ${modalPersonalIdEdicion ? 'actualizado' : 'agregado'}`,
       'ok'
     );
     cerrarModalPersonal();
@@ -7269,8 +7415,10 @@ const ACCIONES_AUDITORIA = [
     { v: 'importar_bd',                   l: 'Importar base de datos' },
     { v: 'crear_personal',                l: 'Crear registro de personal' },
     { v: 'editar_personal',               l: 'Editar registro de personal' },
+    { v: 'corregir_area_personal',        l: 'Corregir área (error de digitación, no traslado)' },
     { v: 'eliminar_personal',             l: 'Eliminar registro de personal' },
     { v: 'cambio_area_lote',              l: 'Cambio de área en lote' },
+    { v: 'corregir_area_lote',            l: 'Corregir área en lote (error de digitación, no traslado)' },
     { v: 'actualizar_areas_personal',     l: 'Actualizar áreas desde Excel' },
   ]},
   { grupo: 'Áreas', items: [
@@ -8592,6 +8740,8 @@ window.toggleSeleccionarTodosPersonal = toggleSeleccionarTodosPersonal;
 window.seleccionarTodosLosFiltradosPersonal = seleccionarTodosLosFiltradosPersonal;
 window.limpiarSeleccionPersonal     = limpiarSeleccionPersonal;
 window.aplicarCambioAreaLote        = aplicarCambioAreaLote;
+window.toggleCambioLoteCorreccion   = toggleCambioLoteCorreccion;
+window.toggleModalPersonalCorreccion = toggleModalPersonalCorreccion;
 window.confirmarGuardarAcceso       = confirmarGuardarAcceso;
 window.generarBackupMensualManual   = generarBackupMensualManual;
 window.generarBackupManualDesdeAdmin = generarBackupManualDesdeAdmin;

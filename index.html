@@ -837,7 +837,11 @@
             <div id="personal-cambio-lote" style="display:none;margin-bottom:16px;padding:12px 16px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;align-items:center;gap:12px;flex-wrap:wrap;">
               <span id="personal-cambio-lote-info" style="font-size:12px;font-weight:600;color:var(--blue);"></span>
               <select id="personal-cambio-lote-area" class="form-select" style="max-width:280px;"></select>
-              <label style="font-size:12px;font-weight:600;color:var(--blue);display:flex;align-items:center;gap:6px;">
+              <label style="font-size:12px;font-weight:700;color:var(--blue);display:flex;align-items:center;gap:6px;cursor:pointer;" title="Mueve el mes completo a la nueva área, sin partir días — para cuando el área anterior estaba mal digitada, no fue un traslado real.">
+                <input type="checkbox" id="personal-cambio-lote-es-correccion" onchange="toggleCambioLoteCorreccion()">
+                Es corrección (no traslado)
+              </label>
+              <label id="personal-cambio-lote-corte-wrap" style="font-size:12px;font-weight:600;color:var(--blue);display:flex;align-items:center;gap:6px;">
                 Día de corte
                 <input type="number" id="personal-cambio-lote-corte" class="form-select" min="1" max="31" style="max-width:80px;" placeholder="Hoy">
               </label>
@@ -1275,6 +1279,15 @@
       <div class="form-field">
         <label class="form-label">Área</label>
         <input type="text" id="modal-personal-area" class="form-select">
+      </div>
+      <div class="form-field" id="modal-personal-correccion-wrap" style="display:none;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" id="modal-personal-es-correccion" onchange="toggleModalPersonalCorreccion()">
+          Es corrección de un error de digitación (no un traslado real)
+        </label>
+        <small style="display:block;margin-top:4px;color:var(--txt2, #666);font-size:11px;">
+          Mueve el mes completo a la nueva área, sin partir días ni dejar constancia de movimiento en las novedades — solo se corrige el dato.
+        </small>
       </div>
       <div class="form-field" id="modal-personal-corte-wrap" style="display:none;">
         <label class="form-label">Día de corte (si cambia de área)</label>
