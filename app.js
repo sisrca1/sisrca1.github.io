@@ -5952,8 +5952,59 @@ async function cargarDirectorioPersonal() {
   }
 }
 
-function obtenerPersonalFiltrado() {
-  const fCodigo = ($('personal-filtro-codigo')?.value || '').toLowerCase().trim();
+async function exportarDirectorioPersonal() {
+  if (!personalDirectorioCache.length) { toast('No hay registros para exportar', 'err'); return; }
+  try {
+    toast('⏳ Generando archivo...', 'ok');
+    if (!window.ExcelJS) {
+      await new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+        sc.onload = res; sc.onerror = rej;
+        document.head.appendChild(sc);
+      });
+    }
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('BASE');
+
+    ws.columns = [
+      { header: 'CODIGO',       key: 'codigo',    width: 12 },
+      { header: 'GRADO',        key: 'grado',     width: 26 },
+      { header: 'APELLIDOS',    key: 'apellidos', width: 28 },
+      { header: 'NOMBRES',      key: 'nombres',   width: 28 },
+      { header: 'AREA ACTUAL',  key: 'area',      width: 34 },
+    ];
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A6E' } };
+
+    [...personalDirectorioCache]
+      .sort((a, b) => String(a.codigo || '').localeCompare(String(b.codigo || ''), 'es', { numeric: true }))
+      .forEach(p => ws.addRow({
+        codigo: p.codigo || '',
+        grado: p.grado || '',
+        apellidos: p.apellidos || '',
+        nombres: p.nombres || '',
+        area: p.area || ''
+      }));
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `base_personal_actual_${obtenerFechaParts().periodo}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast('✅ Archivo generado', 'ok');
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
+}
+
+function obtenerPersonalFiltrado() {  const fCodigo = ($('personal-filtro-codigo')?.value || '').toLowerCase().trim();
   const fGrado = ($('personal-filtro-grado')?.value || '').toLowerCase().trim();
   const fNombre = ($('personal-filtro-nombre')?.value || '').toLowerCase().trim();
   const fArea = ($('personal-filtro-area')?.value || '').toLowerCase().trim();
@@ -8802,6 +8853,7 @@ window.cambiarPaginaAccesos         = cambiarPaginaAccesos;
 window.verAreasSinAcceso            = verAreasSinAcceso;
 window.cerrarModalAreasSinAcceso    = cerrarModalAreasSinAcceso;
 window.exportarAccesos              = exportarAccesos;
+window.exportarDirectorioPersonal   = exportarDirectorioPersonal;
 window.abrirModalPerfil             = abrirModalPerfil;
 window.cerrarModalPerfil            = cerrarModalPerfil;
 window.guardarPerfilAcceso          = guardarPerfilAcceso;
