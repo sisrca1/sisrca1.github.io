@@ -163,6 +163,7 @@ async function initFirebase() {
         // mientras esta pestaña sigue abierta, se entera sin recargar la página.
         iniciarListenerPermisoUsuario();
         iniciarListenerAccesoUsuario();
+        iniciarListenerMantenimiento();
       } else {
         detenerListenersPropios();
         usuario = null;
@@ -351,6 +352,10 @@ let unsubAccesoUsuario  = null;
 function detenerListenersPropios() {
   if (unsubPermisoUsuario) { unsubPermisoUsuario(); unsubPermisoUsuario = null; }
   if (unsubAccesoUsuario)  { unsubAccesoUsuario();  unsubAccesoUsuario = null; }
+  if (unsubMantenimiento)  { unsubMantenimiento();  unsubMantenimiento = null; }
+  hide('pantalla-mantenimiento');
+  const avisoAdmin = $('mantenimiento-info-flotante');
+  if (avisoAdmin) avisoAdmin.remove();
 }
 
 function iniciarListenerPermisoUsuario() {
@@ -413,6 +418,95 @@ function iniciarListenerAccesoUsuario() {
       hide('selector-area-activa-secretario');
     }
   }, (e) => console.warn('Listener de acceso interrumpido:', e.message));
+}
+
+/* ── Modo Mantenimiento — tiempo real ──
+   El admin nunca ve la pantalla de mantenimiento, aunque esté activado (así
+   puede entrar a probar los cambios). Todos los demás la ven de inmediato,
+   sin recargar, apenas el documento cambia. */
+let unsubMantenimiento = null;
+
+function iniciarListenerMantenimiento() {
+  if (unsubMantenimiento) unsubMantenimiento();
+  const ref = window._fb.doc(db, 'sistema', 'mantenimiento');
+  unsubMantenimiento = window._fb.onSnapshot(ref, (snap) => {
+    const data = snap.exists() ? snap.data() : null;
+    const activo = !!(data && data.activo);
+
+    if (activo && !esAdmin()) {
+      if ($('pantalla-mantenimiento-mensaje')) {
+        $('pantalla-mantenimiento-mensaje').textContent =
+          (data.mensaje && data.mensaje.trim())
+            ? data.mensaje.trim()
+            : 'Estamos aplicando una mejora al sistema. Vuelva a intentarlo en unos minutos.';
+      }
+      show('pantalla-mantenimiento');
+      $('pantalla-mantenimiento').style.display = 'flex';
+    } else {
+      hide('pantalla-mantenimiento');
+    }
+
+    // Aviso discreto para el admin, para que no se olvide de desactivarlo
+    const avisoAdmin = $('mantenimiento-info-flotante');
+    if (esAdmin()) {
+      if (activo) {
+        if (!avisoAdmin) {
+          const div = document.createElement('div');
+          div.id = 'mantenimiento-info-flotante';
+          div.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9998;background:#c9a227;color:#0d1b3e;font-weight:700;font-size:12px;padding:10px 16px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);';
+          div.textContent = '🚧 Modo Mantenimiento ACTIVO — los demás usuarios no pueden entrar';
+          document.body.appendChild(div);
+        }
+      } else if (avisoAdmin) {
+        avisoAdmin.remove();
+      }
+    }
+
+    // Refleja el estado en el interruptor del panel, si está a la vista
+    if ($('mantenimiento-activo')) {
+      $('mantenimiento-activo').checked = activo;
+      $('mantenimiento-estado-texto').textContent = activo
+        ? 'Activado — el sistema está bloqueado para todos menos usted'
+        : 'Desactivado — el sistema funciona con normalidad';
+      $('mantenimiento-estado-texto').style.color = activo ? 'var(--red)' : '';
+      if ($('mantenimiento-mensaje') && data && data.mensaje && !$('mantenimiento-mensaje').dataset.editando) {
+        $('mantenimiento-mensaje').value = data.mensaje;
+      }
+    }
+  }, (e) => console.warn('Listener de mantenimiento interrumpido:', e.message));
+}
+
+async function guardarModoMantenimiento() {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+  const activo = $('mantenimiento-activo').checked;
+  const mensaje = $('mantenimiento-mensaje').value.trim();
+
+  if (activo) {
+    const ok = await confirmarAccion(
+      'Esto va a bloquear el acceso a TODOS los secretarios y al supervisor de inmediato — solo usted va a poder entrar. ¿Confirma que quiere activar el Modo Mantenimiento?',
+      'Activar Modo Mantenimiento'
+    );
+    if (!ok) { $('mantenimiento-activo').checked = false; return; }
+  }
+
+  try {
+    await window._fb.setDoc(window._fb.doc(db, 'sistema', 'mantenimiento'), {
+      activo, mensaje,
+      activadoPor: usuario.email,
+      fecha: new Date()
+    }, { merge: true });
+
+    await registrarEnAuditoria(
+      activo ? 'activar_mantenimiento' : 'desactivar_mantenimiento',
+      null, usuario.email, null, null, { mensaje },
+      `Modo Mantenimiento ${activo ? 'ACTIVADO' : 'desactivado'} por ${usuario.email}`
+    );
+
+    toast(activo ? '🚧 Modo Mantenimiento activado' : '✅ Modo Mantenimiento desactivado', 'ok');
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
 }
 
 // Oculta/deshabilita cualquier elemento con data-permiso="clave" si el usuario no la tiene
@@ -9066,6 +9160,7 @@ window.exportarAccesos              = exportarAccesos;
 window.borrarTodaLaBasePersonal     = borrarTodaLaBasePersonal;
 window.analizarMapeoAccesos         = analizarMapeoAccesos;
 window.aplicarMapeoAccesos          = aplicarMapeoAccesos;
+window.guardarModoMantenimiento     = guardarModoMantenimiento;
 window.exportarDirectorioPersonal   = exportarDirectorioPersonal;
 window.abrirModalPerfil             = abrirModalPerfil;
 window.cerrarModalPerfil            = cerrarModalPerfil;

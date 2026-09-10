@@ -917,3 +917,25 @@ body.dark-mode #admin-tabs{
   #admin-tabs{border-radius:8px;}
   #admin-tabs .admin-tab{padding:8px 10px;font-size:11px;letter-spacing:.02em;flex:1 1 auto;justify-content:center;}
 }
+
+/* ═══════════════════════════════════════════════
+   Interruptor (switch) del Modo Mantenimiento
+═══════════════════════════════════════════════ */
+#mantenimiento-switch-visual::before{
+  content:'';
+  position:absolute;
+  height:20px;
+  width:20px;
+  left:4px;
+  bottom:4px;
+  background:#fff;
+  border-radius:50%;
+  transition:.2s;
+  box-shadow:0 1px 3px rgba(0,0,0,.3);
+}
+#mantenimiento-activo:checked + #mantenimiento-switch-visual{
+  background:#2ecc71;
+}
+#mantenimiento-activo:checked + #mantenimiento-switch-visual::before{
+  transform:translateX(24px);
+}
