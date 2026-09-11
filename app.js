@@ -8223,6 +8223,8 @@ async function cargarAreasPanel() {
   renderizarListaAreasPanel();
 }
 
+let areasPanelSeleccionadas = new Set();
+
 function renderizarListaAreasPanel() {
   const cont = $('areas-panel-lista');
   const totalTxt = $('areas-panel-total');
@@ -8233,31 +8235,73 @@ function renderizarListaAreasPanel() {
     ? areasPanelCache.filter(a => a.toLowerCase().includes(filtro))
     : areasPanelCache;
 
+  // Quita de la selección áreas que ya no existen en el catálogo (renombradas/eliminadas)
+  areasPanelSeleccionadas = new Set([...areasPanelSeleccionadas].filter(a => areasPanelCache.includes(a)));
+
   if (totalTxt) totalTxt.textContent = `${filtradas.length} de ${areasPanelCache.length} área${areasPanelCache.length !== 1 ? 's' : ''}`;
 
   if (!filtradas.length) {
     cont.innerHTML = `<div style="padding:16px;text-align:center;font-size:13px;color:var(--txt2);">Ningún área coincide con la búsqueda</div>`;
-    return;
-  }
-
-  cont.innerHTML = filtradas.map(area => {
-    const enEdicion = areaPanelEditando === area;
-    if (enEdicion) {
+  } else {
+    cont.innerHTML = filtradas.map(area => {
+      const enEdicion = areaPanelEditando === area;
+      const esc = area.replace(/'/g, "\\'");
+      if (enEdicion) {
+        return `
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);">
+            <input type="text" id="areas-panel-input-editar" class="form-select" value="${area.replace(/"/g, '&quot;')}" style="flex:1;font-size:13px;padding:6px 10px;">
+            <button class="btn-acc btn-acc-blue" style="padding:5px 10px;font-size:11px;" onclick="guardarRenombreAreaPanel('${esc}')">💾 Guardar</button>
+            <button class="btn-acc btn-acc-ghost" style="padding:5px 10px;font-size:11px;" onclick="cancelarRenombreAreaPanel()">Cancelar</button>
+          </div>`;
+      }
       return `
         <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);">
-          <input type="text" id="areas-panel-input-editar" class="form-select" value="${area.replace(/"/g, '&quot;')}" style="flex:1;font-size:13px;padding:6px 10px;">
-          <button class="btn-acc btn-acc-blue" style="padding:5px 10px;font-size:11px;" onclick="guardarRenombreAreaPanel('${area.replace(/'/g, "\\'")}')">💾 Guardar</button>
-          <button class="btn-acc btn-acc-ghost" style="padding:5px 10px;font-size:11px;" onclick="cancelarRenombreAreaPanel()">Cancelar</button>
+          <input type="checkbox" data-permiso="areas_gestionar" onchange="alternarSeleccionAreaPanel('${esc}')" ${areasPanelSeleccionadas.has(area) ? 'checked' : ''}>
+          <span style="flex:1;font-size:13px;">${area}</span>
+          <button class="btn-acc btn-acc-orange" style="padding:5px 10px;font-size:11px;" data-permiso="areas_gestionar" onclick="iniciarRenombreAreaPanel('${esc}')">✏️ Renombrar</button>
+          <button class="btn-acc btn-acc-red" style="padding:5px 10px;font-size:11px;" data-permiso="areas_gestionar" onclick="eliminarAreaPanel('${esc}')">🗑️ Eliminar</button>
         </div>`;
-    }
-    return `
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);">
-        <span style="flex:1;font-size:13px;">${area}</span>
-        <button class="btn-acc btn-acc-orange" style="padding:5px 10px;font-size:11px;" data-permiso="areas_gestionar" onclick="iniciarRenombreAreaPanel('${area.replace(/'/g, "\\'")}')">✏️ Renombrar</button>
-        <button class="btn-acc btn-acc-red" style="padding:5px 10px;font-size:11px;" data-permiso="areas_gestionar" onclick="eliminarAreaPanel('${area.replace(/'/g, "\\'")}')">🗑️ Eliminar</button>
-      </div>`;
-  }).join('');
+    }).join('');
+  }
+
+  const checkTodas = $('areas-panel-check-todas');
+  if (checkTodas) checkTodas.checked = filtradas.length > 0 && filtradas.every(a => areasPanelSeleccionadas.has(a));
+
+  renderizarBarraSeleccionAreasPanel();
   aplicarPermisosBotones();
+}
+
+function alternarSeleccionAreaPanel(area) {
+  if (areasPanelSeleccionadas.has(area)) areasPanelSeleccionadas.delete(area);
+  else areasPanelSeleccionadas.add(area);
+  renderizarListaAreasPanel();
+}
+
+function alternarSeleccionarTodasAreasPanel() {
+  const filtro = ($('areas-panel-buscar')?.value || '').trim().toLowerCase();
+  const filtradas = filtro ? areasPanelCache.filter(a => a.toLowerCase().includes(filtro)) : areasPanelCache;
+  const todasMarcadas = filtradas.length > 0 && filtradas.every(a => areasPanelSeleccionadas.has(a));
+  if (todasMarcadas) filtradas.forEach(a => areasPanelSeleccionadas.delete(a));
+  else filtradas.forEach(a => areasPanelSeleccionadas.add(a));
+  renderizarListaAreasPanel();
+}
+
+function cancelarSeleccionAreasPanel() {
+  areasPanelSeleccionadas.clear();
+  renderizarListaAreasPanel();
+}
+
+function renderizarBarraSeleccionAreasPanel() {
+  const barra = $('areas-panel-barra-seleccion');
+  const texto = $('areas-panel-seleccion-texto');
+  if (!barra) return;
+  const n = areasPanelSeleccionadas.size;
+  if (n >= 2) {
+    barra.style.display = 'flex';
+    if (texto) texto.textContent = `${n} áreas seleccionadas`;
+  } else {
+    barra.style.display = 'none';
+  }
 }
 
 async function agregarAreaPanel() {
@@ -8418,6 +8462,209 @@ async function eliminarAreaPanel(area) {
     toast(`✅ Área "${area}" eliminada`, 'ok');
   } catch(e) {
     toast('❌ Error guardando: ' + e.message, 'err');
+  }
+}
+
+/* ── Unificar varias áreas seleccionadas en un solo nombre ──
+   Fusiona el catálogo (varias áreas -> una sola), copia el historial de
+   Novedades desde UNIFICAR_AREAS_DESDE hasta el mes actual (Firestore no
+   permite listar qué meses tiene cada área, así que se recorre ese rango
+   mes por mes) y actualiza los accesos que tenían asignada alguna de las
+   áreas viejas. No borra los documentos originales — quedan como historial
+   huérfano pero intacto, igual que al renombrar o eliminar un área. */
+const UNIFICAR_AREAS_DESDE = '2026-09';
+
+let unificarAreasViejas = [];
+let unificarAreasPreview = null;
+
+function abrirModalUnificarAreas() {
+  const areas = [...areasPanelSeleccionadas];
+  if (areas.length < 2) return;
+
+  unificarAreasViejas = areas;
+  unificarAreasPreview = null;
+  $('modal-unificar-areas-sub').textContent = `${areas.length} áreas seleccionadas`;
+  $('modal-unificar-areas-lista-seleccion').innerHTML = areas.map(a =>
+    `<span class="badge-area" style="display:inline-block;padding:4px 10px;font-size:12px;margin:3px 4px 3px 0;">${a}</span>`
+  ).join('');
+  $('modal-unificar-nombre-nuevo').value = '';
+  $('modal-unificar-areas-preview').innerHTML = '';
+  $('modal-unificar-desde-txt').textContent = `${obtenerNombreMes(UNIFICAR_AREAS_DESDE.split('-')[1])} ${UNIFICAR_AREAS_DESDE.split('-')[0]}`;
+  hide('modal-unificar-areas-error');
+  $('modal-unificar-btn-analizar').style.display = '';
+  $('modal-unificar-btn-confirmar').style.display = 'none';
+
+  $('modal-unificar-areas').style.display = 'flex';
+}
+
+function cerrarModalUnificarAreas() {
+  $('modal-unificar-areas').style.display = 'none';
+}
+
+// Recorre mes por mes desde UNIFICAR_AREAS_DESDE hasta el actual, revisando
+// si cada área vieja tiene novedades cargadas en ese mes.
+async function analizarUnificarAreas() {
+  const errorEl = $('modal-unificar-areas-error');
+  hide('modal-unificar-areas-error');
+
+  const nombreNuevo = ($('modal-unificar-nombre-nuevo')?.value || '').trim();
+  if (!nombreNuevo) {
+    errorEl.textContent = 'Escriba el nombre del área unificada';
+    show('modal-unificar-areas-error');
+    return;
+  }
+  if (areasPanelCache.some(a => a.toLowerCase() === nombreNuevo.toLowerCase() && !unificarAreasViejas.some(v => v.toLowerCase() === a.toLowerCase()))) {
+    errorEl.textContent = 'Ya existe otra área con ese nombre en el catálogo';
+    show('modal-unificar-areas-error');
+    return;
+  }
+
+  const contPreview = $('modal-unificar-areas-preview');
+  contPreview.innerHTML = `<div style="padding:14px;text-align:center;font-size:12px;color:var(--txt2);">⏳ Revisando meses desde ${UNIFICAR_AREAS_DESDE}...</div>`;
+
+  const periodoActual = obtenerFechaParts().periodo;
+  const periodos = [];
+  let p = UNIFICAR_AREAS_DESDE;
+  while (periodos.length < 60) {
+    periodos.push(p);
+    if (p === periodoActual) break;
+    p = obtenerPeriodoSiguiente(p);
+  }
+
+  const conDatos = [];
+  for (const periodo of periodos) {
+    const fuentes = [];
+    for (const area of unificarAreasViejas) {
+      const snap = await window._fb.getDoc(window._fb.doc(db, 'novedades', area, periodo, 'datos'));
+      if (snap.exists()) fuentes.push({ area, datos: snap.data() });
+    }
+    if (fuentes.length) conDatos.push({ periodo, fuentes, accion: fuentes.length > 1 ? 'unir' : 'copiar' });
+  }
+
+  await cargarAccesos();
+  const accesosAfectados = accesosCache.filter(a => a.areas.some(ar => unificarAreasViejas.includes(ar)));
+
+  unificarAreasPreview = { nombreNuevo, periodos: conDatos, accesosAfectados };
+  renderizarPreviewUnificarAreas();
+}
+
+function renderizarPreviewUnificarAreas() {
+  const cont = $('modal-unificar-areas-preview');
+  const { periodos, accesosAfectados, nombreNuevo } = unificarAreasPreview;
+
+  let html = '';
+  if (!periodos.length) {
+    html += `<div style="padding:12px;font-size:12px;color:var(--txt2);">No se encontraron novedades cargadas en esas áreas desde ${UNIFICAR_AREAS_DESDE}.</div>`;
+  } else {
+    html += `<div style="padding:8px 10px;font-size:12px;font-weight:600;">Meses con novedades que se copiarán a "${nombreNuevo}":</div>`;
+    html += periodos.map(p => {
+      if (p.fuentes.length === 1) {
+        return `<div style="padding:6px 10px;font-size:12px;border-top:1px solid var(--border);">${p.periodo} — copia directa desde ${p.fuentes[0].area}</div>`;
+      }
+      return `
+        <div style="padding:6px 10px;font-size:12px;border-top:1px solid var(--border);background:rgba(234,179,8,.10);">
+          <div>⚠️ ${p.periodo} — tiene novedades en ${p.fuentes.map(f => f.area).join(' Y ')} a la vez</div>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;">
+            <input type="checkbox" ${p.accion === 'unir' ? 'checked' : ''} onchange="alternarAccionConflictoUnificar('${p.periodo}')">
+            Unir las listas de agentes de ambas (si lo desmarca, este mes se omite y lo revisa usted manualmente después)
+          </label>
+        </div>`;
+    }).join('');
+  }
+
+  html += `<div style="padding:8px 10px;font-size:12px;font-weight:600;border-top:1px solid var(--border);">Accesos que se actualizarán automáticamente:</div>`;
+  html += accesosAfectados.length
+    ? accesosAfectados.map(a => `<div style="padding:4px 10px;font-size:12px;">${a.correo}</div>`).join('')
+    : `<div style="padding:4px 10px;font-size:12px;color:var(--txt2);">Ninguno tiene hoy asignada alguna de estas áreas.</div>`;
+
+  cont.innerHTML = html;
+  $('modal-unificar-btn-analizar').style.display = 'none';
+  $('modal-unificar-btn-confirmar').style.display = '';
+}
+
+function alternarAccionConflictoUnificar(periodo) {
+  const item = unificarAreasPreview?.periodos.find(p => p.periodo === periodo);
+  if (item) item.accion = item.accion === 'unir' ? 'omitir' : 'unir';
+}
+
+async function confirmarUnificarAreas() {
+  const errorEl = $('modal-unificar-areas-error');
+  hide('modal-unificar-areas-error');
+  if (!unificarAreasPreview) return;
+
+  const { nombreNuevo, periodos, accesosAfectados } = unificarAreasPreview;
+
+  const confirmado = await confirmarAccion(
+    `Se van a unificar ${unificarAreasViejas.length} áreas en "${nombreNuevo}": se copiará su historial de novedades ` +
+    `desde ${UNIFICAR_AREAS_DESDE}, se actualizarán ${accesosAfectados.length} acceso(s) y las áreas viejas se quitarán ` +
+    `del catálogo (sus registros originales no se borran). ¿Continuar?`,
+    'Unificar áreas'
+  );
+  if (!confirmado) return;
+
+  try {
+    toast('⏳ Unificando áreas, un momento...', 'ok');
+
+    // 1. Copiar/fusionar el historial de Novedades mes por mes
+    for (const p of periodos) {
+      if (p.fuentes.length > 1 && p.accion !== 'unir') continue; // conflicto sin resolver: se omite, queda para revisión manual
+
+      let datosFinal;
+      if (p.fuentes.length === 1) {
+        datosFinal = { ...p.fuentes[0].datos };
+      } else {
+        // Toma como base el documento modificado más recientemente (conserva su
+        // estado de cierre/bloqueos como el vigente) y le suma los agentes que
+        // falten de la(s) otra(s) fuente(s), sin duplicar por código.
+        const ordenados = [...p.fuentes].sort((a, b) => {
+          const fa = a.datos.ultimaModificacion?.toDate ? a.datos.ultimaModificacion.toDate().getTime() : 0;
+          const fb = b.datos.ultimaModificacion?.toDate ? b.datos.ultimaModificacion.toDate().getTime() : 0;
+          return fb - fa;
+        });
+        const base = { ...ordenados[0].datos };
+        const agentesUnidos = [...(base.agentes || [])];
+        const codigosExistentes = new Set(agentesUnidos.map(ag => ag.codigo));
+        for (const otra of ordenados.slice(1)) {
+          for (const ag of (otra.datos.agentes || [])) {
+            if (!codigosExistentes.has(ag.codigo)) {
+              agentesUnidos.push(ag);
+              codigosExistentes.add(ag.codigo);
+            }
+          }
+        }
+        datosFinal = { ...base, agentes: agentesUnidos };
+      }
+      await window._fb.setDoc(window._fb.doc(db, 'novedades', nombreNuevo, p.periodo, 'datos'), datosFinal);
+    }
+
+    // 2. Catálogo: quita las áreas viejas, agrega la nueva
+    const catalogoActual = await obtenerAreasNovedades();
+    const catalogoNuevo = [...new Set([
+      ...catalogoActual.filter(a => !unificarAreasViejas.includes(a)),
+      nombreNuevo
+    ])];
+    areasPanelCache = await guardarCatalogoAreas(catalogoNuevo);
+
+    // 3. Accesos: reemplaza cualquier área vieja por el nombre nuevo
+    for (const acceso of accesosAfectados) {
+      const areasNuevas = [...new Set(acceso.areas.map(a => unificarAreasViejas.includes(a) ? nombreNuevo : a))];
+      await guardarAcceso(acceso.correo, areasNuevas, acceso.codigo, acceso.id);
+    }
+
+    const mesesFusionados = periodos.filter(p => p.fuentes.length === 1 || p.accion === 'unir').map(p => p.periodo);
+    await registrarEnAuditoria('area_unificar', nombreNuevo, usuario.email, null, null,
+      { areasViejas: unificarAreasViejas, mesesFusionados },
+      `Áreas unificadas en "${nombreNuevo}": ${unificarAreasViejas.join(', ')} — ${mesesFusionados.length} mes(es) copiados, ${accesosAfectados.length} acceso(s) actualizados`
+    );
+
+    toast(`✅ Áreas unificadas en "${nombreNuevo}"`, 'ok');
+    cancelarSeleccionAreasPanel();
+    cerrarModalUnificarAreas();
+    renderizarListaAreasPanel();
+
+  } catch(e) {
+    errorEl.textContent = 'Error unificando: ' + e.message;
+    show('modal-unificar-areas-error');
   }
 }
 
@@ -9216,6 +9463,14 @@ window.cancelarRenombreAreaPanel    = cancelarRenombreAreaPanel;
 window.guardarRenombreAreaPanel     = guardarRenombreAreaPanel;
 window.eliminarAreaPanel            = eliminarAreaPanel;
 window.renderizarListaAreasPanel    = renderizarListaAreasPanel;
+window.alternarSeleccionAreaPanel   = alternarSeleccionAreaPanel;
+window.alternarSeleccionarTodasAreasPanel = alternarSeleccionarTodasAreasPanel;
+window.cancelarSeleccionAreasPanel  = cancelarSeleccionAreasPanel;
+window.abrirModalUnificarAreas       = abrirModalUnificarAreas;
+window.cerrarModalUnificarAreas      = cerrarModalUnificarAreas;
+window.analizarUnificarAreas         = analizarUnificarAreas;
+window.alternarAccionConflictoUnificar = alternarAccionConflictoUnificar;
+window.confirmarUnificarAreas        = confirmarUnificarAreas;
 window.analizarActualizacionAreas   = analizarActualizacionAreas;
 window.aplicarActualizacionAreas    = aplicarActualizacionAreas;
 window.descargarCodigosNoEncontrados = descargarCodigosNoEncontrados;
