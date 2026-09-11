@@ -1677,6 +1677,14 @@
         </p>
       </div>
       <div id="modal-unificar-areas-preview" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-top:10px;"></div>
+      <div class="progress-wrap" id="modal-unificar-progreso-wrap">
+        <div class="progress-header">
+          <span id="modal-unificar-progreso-label">Revisando...</span>
+          <span id="modal-unificar-progreso-txt">0%</span>
+        </div>
+        <div class="progress-track"><div id="modal-unificar-progreso-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--blue),#60a5fa);border-radius:999px;transition:width .2s;"></div></div>
+        <div class="progress-nota">No cierre esta ventana hasta que termine.</div>
+      </div>
       <div id="modal-unificar-areas-error" style="display:none;padding:10px 12px;background:var(--red);color:white;border-radius:8px;font-size:12px;margin-top:10px;"></div>
       <div class="modal-footer">
         <button class="btn-modal-cancel" onclick="cerrarModalUnificarAreas()">Cancelar</button>

@@ -8491,7 +8491,10 @@ function abrirModalUnificarAreas() {
   $('modal-unificar-areas-preview').innerHTML = '';
   $('modal-unificar-desde-txt').textContent = `${obtenerNombreMes(UNIFICAR_AREAS_DESDE.split('-')[1])} ${UNIFICAR_AREAS_DESDE.split('-')[0]}`;
   hide('modal-unificar-areas-error');
+  ocultarProgresoUnificar();
+  $('modal-unificar-btn-analizar').disabled = false;
   $('modal-unificar-btn-analizar').style.display = '';
+  $('modal-unificar-btn-confirmar').disabled = false;
   $('modal-unificar-btn-confirmar').style.display = 'none';
 
   $('modal-unificar-areas').style.display = 'flex';
@@ -8499,6 +8502,24 @@ function abrirModalUnificarAreas() {
 
 function cerrarModalUnificarAreas() {
   $('modal-unificar-areas').style.display = 'none';
+}
+
+function mostrarProgresoUnificar(label) {
+  $('modal-unificar-progreso-label').textContent = label;
+  $('modal-unificar-progreso-txt').textContent = '0%';
+  $('modal-unificar-progreso-bar').style.width = '0%';
+  $('modal-unificar-progreso-wrap').style.display = 'block';
+}
+
+function actualizarProgresoUnificar(hechos, total, label) {
+  const pct = total > 0 ? Math.round((hechos / total) * 100) : 100;
+  $('modal-unificar-progreso-bar').style.width = pct + '%';
+  $('modal-unificar-progreso-txt').textContent = pct + '%';
+  if (label) $('modal-unificar-progreso-label').textContent = label;
+}
+
+function ocultarProgresoUnificar() {
+  $('modal-unificar-progreso-wrap').style.display = 'none';
 }
 
 // Recorre mes por mes desde UNIFICAR_AREAS_DESDE hasta el actual, revisando
@@ -8519,8 +8540,8 @@ async function analizarUnificarAreas() {
     return;
   }
 
-  const contPreview = $('modal-unificar-areas-preview');
-  contPreview.innerHTML = `<div style="padding:14px;text-align:center;font-size:12px;color:var(--txt2);">⏳ Revisando meses desde ${UNIFICAR_AREAS_DESDE}...</div>`;
+  $('modal-unificar-areas-preview').innerHTML = '';
+  $('modal-unificar-btn-analizar').disabled = true;
 
   const periodoActual = obtenerFechaParts().periodo;
   const periodos = [];
@@ -8531,12 +8552,18 @@ async function analizarUnificarAreas() {
     p = obtenerPeriodoSiguiente(p);
   }
 
+  const totalRevisiones = periodos.length * unificarAreasViejas.length;
+  let hechas = 0;
+  mostrarProgresoUnificar(`Revisando meses desde ${UNIFICAR_AREAS_DESDE}...`);
+
   const conDatos = [];
   for (const periodo of periodos) {
     const fuentes = [];
     for (const area of unificarAreasViejas) {
       const snap = await window._fb.getDoc(window._fb.doc(db, 'novedades', area, periodo, 'datos'));
       if (snap.exists()) fuentes.push({ area, datos: snap.data() });
+      hechas++;
+      actualizarProgresoUnificar(hechas, totalRevisiones, `Revisando ${periodo} — ${area}`);
     }
     if (fuentes.length) conDatos.push({ periodo, fuentes, accion: fuentes.length > 1 ? 'unir' : 'copiar' });
   }
@@ -8545,6 +8572,8 @@ async function analizarUnificarAreas() {
   const accesosAfectados = accesosCache.filter(a => a.areas.some(ar => unificarAreasViejas.includes(ar)));
 
   unificarAreasPreview = { nombreNuevo, periodos: conDatos, accesosAfectados };
+  ocultarProgresoUnificar();
+  $('modal-unificar-btn-analizar').disabled = false;
   renderizarPreviewUnificarAreas();
 }
 
@@ -8603,11 +8632,17 @@ async function confirmarUnificarAreas() {
   if (!confirmado) return;
 
   try {
-    toast('⏳ Unificando áreas, un momento...', 'ok');
+    $('modal-unificar-btn-confirmar').disabled = true;
+
+    const totalPasos = periodos.length + accesosAfectados.length + 1; // + 1 por el catálogo
+    let hechos = 0;
+    mostrarProgresoUnificar('Copiando novedades...');
 
     // 1. Copiar/fusionar el historial de Novedades mes por mes
     for (const p of periodos) {
-      if (p.fuentes.length > 1 && p.accion !== 'unir') continue; // conflicto sin resolver: se omite, queda para revisión manual
+      if (p.fuentes.length > 1 && p.accion !== 'unir') { hechos++; continue; } // conflicto sin resolver: se omite, queda para revisión manual
+
+      actualizarProgresoUnificar(hechos, totalPasos, `Copiando novedades de ${p.periodo}...`);
 
       let datosFinal;
       if (p.fuentes.length === 1) {
@@ -8635,20 +8670,28 @@ async function confirmarUnificarAreas() {
         datosFinal = { ...base, agentes: agentesUnidos };
       }
       await window._fb.setDoc(window._fb.doc(db, 'novedades', nombreNuevo, p.periodo, 'datos'), datosFinal);
+      hechos++;
+      actualizarProgresoUnificar(hechos, totalPasos);
     }
 
     // 2. Catálogo: quita las áreas viejas, agrega la nueva
+    actualizarProgresoUnificar(hechos, totalPasos, 'Actualizando el catálogo de áreas...');
     const catalogoActual = await obtenerAreasNovedades();
     const catalogoNuevo = [...new Set([
       ...catalogoActual.filter(a => !unificarAreasViejas.includes(a)),
       nombreNuevo
     ])];
     areasPanelCache = await guardarCatalogoAreas(catalogoNuevo);
+    hechos++;
+    actualizarProgresoUnificar(hechos, totalPasos);
 
     // 3. Accesos: reemplaza cualquier área vieja por el nombre nuevo
     for (const acceso of accesosAfectados) {
+      actualizarProgresoUnificar(hechos, totalPasos, `Actualizando acceso ${acceso.correo}...`);
       const areasNuevas = [...new Set(acceso.areas.map(a => unificarAreasViejas.includes(a) ? nombreNuevo : a))];
       await guardarAcceso(acceso.correo, areasNuevas, acceso.codigo, acceso.id);
+      hechos++;
+      actualizarProgresoUnificar(hechos, totalPasos);
     }
 
     const mesesFusionados = periodos.filter(p => p.fuentes.length === 1 || p.accion === 'unir').map(p => p.periodo);
@@ -8658,11 +8701,15 @@ async function confirmarUnificarAreas() {
     );
 
     toast(`✅ Áreas unificadas en "${nombreNuevo}"`, 'ok');
+    ocultarProgresoUnificar();
+    $('modal-unificar-btn-confirmar').disabled = false;
     cancelarSeleccionAreasPanel();
     cerrarModalUnificarAreas();
     renderizarListaAreasPanel();
 
   } catch(e) {
+    ocultarProgresoUnificar();
+    $('modal-unificar-btn-confirmar').disabled = false;
     errorEl.textContent = 'Error unificando: ' + e.message;
     show('modal-unificar-areas-error');
   }
