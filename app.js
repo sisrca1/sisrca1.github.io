@@ -887,8 +887,18 @@ function crearComboboxArea({ inputId, listaId, onSeleccionar, permitirNuevo = fa
 
   const cerrarLista = () => {
     lista.style.display = 'none';
-    window.removeEventListener('scroll', cerrarLista, true);
+    window.removeEventListener('scroll', cerrarSiScrollFuera, true);
     window.removeEventListener('resize', cerrarLista);
+  };
+
+  // El scroll dentro de la propia lista también dispara 'scroll' en la fase
+  // de captura de window (los eventos scroll pasan por window camino al
+  // elemento). Sin este filtro, apenas el usuario intentaba desplazarse
+  // dentro del desplegable, este se cerraba de inmediato y no dejaba ver
+  // el resto de las áreas.
+  const cerrarSiScrollFuera = (e) => {
+    if (lista.contains(e.target)) return;
+    cerrarLista();
   };
 
   const renderLista = (filtro) => {
@@ -921,9 +931,10 @@ function crearComboboxArea({ inputId, listaId, onSeleccionar, permitirNuevo = fa
     }
     posicionarLista();
     lista.style.display = 'block';
-    // Si el usuario hace scroll (por ejemplo dentro de un modal) mientras la
-    // lista está abierta, se cierra en vez de quedar desalineada
-    window.addEventListener('scroll', cerrarLista, true);
+    // Si el usuario hace scroll fuera de la lista (por ejemplo dentro de un
+    // modal) mientras esta está abierta, se cierra en vez de quedar
+    // desalineada. El scroll dentro de la lista misma no la cierra.
+    window.addEventListener('scroll', cerrarSiScrollFuera, true);
     window.addEventListener('resize', cerrarLista);
   };
 
