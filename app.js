@@ -6622,6 +6622,40 @@ async function guardarRegistroPersonal() {
         console.error('No se pudo partir al agente en Novedades:', e);
         toast('⚠️ El registro se guardó, pero no se pudo actualizar Novedades: ' + e.message, 'err');
       }
+    } else if (!modalPersonalIdEdicion) {
+      // ── Registro NUEVO (no es traslado): si el área ya tiene abierto el
+      //    documento de Novedades de este mes, hay que insertarlo ahí
+      //    también. Antes esto solo pasaba en un cambio de área, así que
+      //    un agente recién creado nunca aparecía en la tabla del mes
+      //    hasta que alguien lo "trasladara" de mentira a la misma área. ──
+      try {
+        const periodo = obtenerFechaParts().periodo;
+        const ref = window._fb.doc(db, 'novedades', areaSanitizada, periodo, 'datos');
+        const snap = await window._fb.getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data();
+          const agentes = [...(data.agentes || [])];
+          const yaExiste = agentes.some(a => _normCodigoAgente(a.codigo) === _normCodigoAgente(codigo));
+          if (!yaExiste) {
+            agentes.push({
+              codigo, grado,
+              apellidosNombres: `${apellidos} ${nombres}`.trim(),
+              novedadesPorDia: {},
+              observaciones: ''
+            });
+            await window._fb.setDoc(ref, { agentes, ultimaModificacion: new Date() }, { merge: true });
+          }
+        }
+        // Si el documento del mes todavía no existe para esa área, no hay
+        // nada que hacer: se creará solo (con este agente ya en `personal`
+        // solo si en el futuro se decide arrastrar también desde `personal`;
+        // por ahora arrastra del mes anterior, así que si el área nunca
+        // tuvo Novedades, el agente entrará normal la primera vez que
+        // alguien abra esa área).
+      } catch(e) {
+        console.error('No se pudo agregar el agente a Novedades del mes en curso:', e);
+        toast('⚠️ El registro se guardó, pero no se pudo agregar a Novedades de este mes: ' + e.message, 'err');
+      }
     }
 
     await registrarEnAuditoria(
