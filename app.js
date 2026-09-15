@@ -6622,12 +6622,14 @@ async function guardarRegistroPersonal() {
         console.error('No se pudo partir al agente en Novedades:', e);
         toast('⚠️ El registro se guardó, pero no se pudo actualizar Novedades: ' + e.message, 'err');
       }
-    } else if (!modalPersonalIdEdicion) {
-      // ── Registro NUEVO (no es traslado): si el área ya tiene abierto el
-      //    documento de Novedades de este mes, hay que insertarlo ahí
-      //    también. Antes esto solo pasaba en un cambio de área, así que
-      //    un agente recién creado nunca aparecía en la tabla del mes
-      //    hasta que alguien lo "trasladara" de mentira a la misma área. ──
+    } else {
+      // ── No hubo cambio real de área (registro nuevo, o edición/reguardado
+      //    de uno existente sin traslado): si el área ya tiene abierto el
+      //    documento de Novedades de este mes, hay que asegurarse de que el
+      //    agente esté ahí. Antes esto solo pasaba en un cambio de área, así
+      //    que un agente que nunca se movió de área podía quedar fuera de la
+      //    tabla del mes (recién creado, o creado antes de que existiera el
+      //    documento del mes) sin ninguna forma de entrar. ──
       try {
         const periodo = obtenerFechaParts().periodo;
         const ref = window._fb.doc(db, 'novedades', areaSanitizada, periodo, 'datos');
