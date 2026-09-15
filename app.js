@@ -840,6 +840,7 @@ function obtenerPeriodoAnterior(periodo) {
 
 async function obtenerAreasNovedades() {
   try {
+    await _firebaseReady; // evita leer window._fb antes de que initFirebase() termine de inicializar
     const ref = window._fb.doc(db, 'sistema', 'areas_novedades');
     const snap = await window._fb.getDoc(ref);
     if (snap.exists() && snap.data().lista && snap.data().lista.length > 0) {
