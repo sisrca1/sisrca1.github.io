@@ -82,14 +82,14 @@ async function obtenerLogoCTE() {
   catch(e) { console.warn('No se pudo cargar el logo de la CTE:', e); return null; }
 }
 
-const CODIGOS_VALIDOS = ["S/N", "OA", "X", "CS", "B", "Li", "V", "PE"];
+const CODIGOS_VALIDOS = ["S/N", "OA", "X", "CS", "B", "LI", "V", "PE"];
 const CODIGOS_DESC = {
   "S/N": "SIN NOVEDAD (normal)",
   "OA":  "OTRA ÁREA — Formulario Único de Traslado (FUT)",
   "X":   "AUSENCIA INJUSTIFICADA",
   "CS":  "COMISIÓN DE SERVICIO",
   "B":   "BAJA (Fallecido, Destitución, Renuncia)",
-  "Li":  "LICENCIA (Paternidad, Matrimonio, Calamidad, Maternidad)",
+  "LI":  "LICENCIA (Paternidad, Matrimonio, Calamidad, Maternidad)",
   "V":   "VACACIONES",
   "PE":  "PERMISO"
 };
@@ -814,7 +814,7 @@ function normalizarCodigo(entrada) {
 function validarCodigo(codigo) {
   if (!codigo) return false;
   const norm = normalizarCodigo(codigo);
-  return CODIGOS_VALIDOS.includes(norm);
+  return CODIGOS_VALIDOS.some(c => normalizarCodigo(c) === norm);
 }
 
 function obtenerCodigoValidoSimilar(entrada) {
@@ -9085,7 +9085,7 @@ async function cargarResumenGeneral(prefix = 'resumen') {
   verificarAreasSinAsignar(prefix);
 
   const filasPorArea = [];
-  const totales = { total: 0, 'S/N':0, 'OA':0, 'X':0, 'CS':0, 'B':0, 'Li':0, 'V':0, 'PE':0 };
+  const totales = { total: 0, 'S/N':0, 'OA':0, 'X':0, 'CS':0, 'B':0, 'LI':0, 'V':0, 'PE':0 };
   const detalleAusenciasX = [];
 
   const areasReales = await obtenerAreasNovedades();
@@ -9103,7 +9103,7 @@ async function cargarResumenGeneral(prefix = 'resumen') {
         const agentes = data.agentes || [];
         if (agentes.length === 0) return;
 
-        const conteo = { 'S/N':0, 'OA':0, 'X':0, 'CS':0, 'B':0, 'Li':0, 'V':0, 'PE':0 };
+        const conteo = { 'S/N':0, 'OA':0, 'X':0, 'CS':0, 'B':0, 'LI':0, 'V':0, 'PE':0 };
         agentes.forEach(agente => {
           const dias = agente.novedadesPorDia || {};
           let diasConX = 0;
