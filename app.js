@@ -2421,9 +2421,9 @@ function poblarSelectoresReportePrueba() {
       opt.textContent = m;
       selMes.appendChild(opt);
     });
-    // Arranca en el mes ANTERIOR, que es el que realmente se informa. Antes
-    // quedaba preseleccionado el mes en curso y había que corregirlo a mano.
-    selMes.value = obtenerPeriodoAnterior(obtenerFechaParts().periodo).split('-')[1];
+    // Arranca en el mes EN CURSO, sincronizado con lo que muestra el
+    // encabezado de Novedades Mensuales arriba.
+    selMes.value = obtenerFechaParts().periodo.split('-')[1];
   }
   if (selAnio.options.length === 0) {
     const anioActual = new Date().getFullYear();
@@ -2433,8 +2433,8 @@ function poblarSelectoresReportePrueba() {
       opt.textContent = String(a);
       selAnio.appendChild(opt);
     }
-    // En enero el mes anterior cae en diciembre del año pasado
-    selAnio.value = obtenerPeriodoAnterior(obtenerFechaParts().periodo).split('-')[0];
+    // Mismo criterio: año en curso
+    selAnio.value = obtenerFechaParts().periodo.split('-')[0];
   }
 }
 
@@ -3826,11 +3826,26 @@ function obtenerTokenDrive(forzarNuevo=false) {
 }
 
 /* ══════════════════════════════════
-   GOOGLE DRIVE — CARPETA POR ÁREA
+   GOOGLE DRIVE — CARPETA POR MES + ÁREA
+   Estructura: CARPETA_GENERAL / "MES AÑO" / {ÁREA} / archivo
+   El mes usado es el que se está reportando (obtenerMesReporte), el mismo
+   que ya se usa para nombrar los archivos — así todas las áreas que suban
+   el reporte de un mes quedan agrupadas bajo una sola carpeta de ese mes,
+   y se va creando una carpeta nueva automáticamente mes tras mes.
 ══════════════════════════════════ */
 async function obtenerOCrearSubcarpeta(token, nombreArea) {
+  const mesReporte = obtenerMesReporte();
+  const nombreMes = `${MESES_ES[mesReporte.getMonth()]} ${mesReporte.getFullYear()}`;
+
+  const idCarpetaMes = await obtenerOCrearCarpetaPublica(token, nombreMes, GDRIVE_CARPETA_GENERAL);
+  return await obtenerOCrearCarpetaPublica(token, nombreArea, idCarpetaMes);
+}
+
+/* Busca una carpeta por nombre dentro de idPadre; si no existe la crea y la
+   deja visible para cualquiera con el link (igual que antes para el área). */
+async function obtenerOCrearCarpetaPublica(token, nombre, idPadre) {
   const q = encodeURIComponent(
-    `mimeType='application/vnd.google-apps.folder' and name='${nombreArea}' and '${GDRIVE_CARPETA_GENERAL}' in parents and trashed=false`
+    `mimeType='application/vnd.google-apps.folder' and name='${nombre}' and '${idPadre}' in parents and trashed=false`
   );
   const sr = await fetch(
     `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&pageSize=1`,
@@ -3843,7 +3858,7 @@ async function obtenerOCrearSubcarpeta(token, nombreArea) {
   const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: nombreArea, mimeType: 'application/vnd.google-apps.folder', parents: [GDRIVE_CARPETA_GENERAL] })
+    body: JSON.stringify({ name: nombre, mimeType: 'application/vnd.google-apps.folder', parents: [idPadre] })
   });
   if (!cr.ok) { const e=await cr.json(); throw new Error(e.error?.message||cr.status); }
   const carpeta = await cr.json();
@@ -3852,7 +3867,7 @@ async function obtenerOCrearSubcarpeta(token, nombreArea) {
     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ role: 'reader', type: 'anyone' })
   });
-  toast(`📁 Carpeta "${nombreArea}" creada ✓`);
+  toast(`📁 Carpeta "${nombre}" creada ✓`);
   return carpeta.id;
 }
 
@@ -4877,9 +4892,8 @@ async function enviarCorreosNotificacion(datos) {
    PANEL ADMIN
 ══════════════════════════════════ */
 
-/* Abre en una pestaña nueva la carpeta de Drive de un área.
-   Los archivos dentro ya quedan identificados por mes gracias
-   al nombrado NRO_MES_MES_AREA_AÑO. */
+/* Abre en una pestaña nueva la carpeta de Drive de un área para el mes que
+   se está reportando ahora (CARPETA_GENERAL / MES AÑO / ÁREA). */
 async function abrirCarpetaArea(area) {
   if (!area) { toast('No se encontró el área para abrir la carpeta','err'); return; }
   try {
