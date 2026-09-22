@@ -2036,7 +2036,11 @@ function poblarSelectCodigos(select) {
 
 function actualizarObsSegunCodigo() {
   const codigo = $('modal-novedad-codigo').value;
-  $('modal-novedad-obs').value = codigo ? (CODIGOS_DESC[codigo] || '') : '';
+  const obs = $('modal-novedad-obs');
+  // No borra lo que el usuario ya escribió o lo que venía cargado — solo
+  // sugiere la descripción por defecto cuando el campo está vacío.
+  if (obs.value.trim()) return;
+  obs.value = codigo ? (CODIGOS_DESC[codigo] || '') : '';
 }
 
 function abrirModalEditarNovedad(agente, dia, idx) {
