@@ -1430,6 +1430,83 @@ function arrastrarNominaMesAnterior(docAnterior) {
   return ordenarAgentesPorGrado(nomina);
 }
 
+/* ── Sombreado horizontal: seleccionar varios días de un mismo agente
+   arrastrando, para aplicarles el mismo código de una sola vez ── */
+let arrastreSel = null;            // { idxAgente, agente, filaTr, diaInicio, diaFin }
+let arrastreHuboMovimiento = false; // true solo si el arrastre cambió de celda (si no, fue un clic simple)
+let arrastreSuprimirClick = false;  // evita que el click que sigue a un arrastre real reabra el modal de un solo día
+let touchTimerArrastre = null;
+let touchInicioPos = null;
+let touchArrastreActivo = false;
+
+function iniciarPosibleArrastre(agente, idx, dia, tr) {
+  arrastreSel = { idxAgente: idx, agente, filaTr: tr, diaInicio: dia, diaFin: dia };
+  arrastreHuboMovimiento = false;
+}
+
+function extenderArrastre(idx, dia, tr) {
+  if (!arrastreSel || arrastreSel.idxAgente !== idx || arrastreSel.filaTr !== tr) return;
+  if (arrastreSel.diaFin === dia) return;
+  arrastreSel.diaFin = dia;
+  arrastreHuboMovimiento = true;
+  pintarArrastre();
+}
+
+function pintarArrastre() {
+  if (!arrastreSel) return;
+  const { filaTr, diaInicio, diaFin } = arrastreSel;
+  const desde = Math.min(diaInicio, diaFin), hasta = Math.max(diaInicio, diaFin);
+  const hoy = new Date().getDate();
+  filaTr.querySelectorAll('td[data-dia]').forEach(td => {
+    const d = parseInt(td.dataset.dia, 10);
+    const dentro = d >= desde && d <= hasta && td.dataset.arrastrable === '1';
+    if (dentro) {
+      td.style.backgroundColor = 'var(--gold-m)';
+      td.style.outline = '2px solid var(--gold)';
+      td.style.outlineOffset = '-2px';
+      td.dataset.sombreada = '1';
+    } else if (td.dataset.sombreada === '1') {
+      td.style.backgroundColor = (d === hoy) ? 'var(--green-l)' : '';
+      td.style.outline = '';
+      td.dataset.sombreada = '0';
+    }
+  });
+}
+
+function finalizarArrastre() {
+  if (!arrastreSel) return;
+  const { agente, idxAgente, diaInicio, diaFin, filaTr } = arrastreSel;
+  const huboMovimiento = arrastreHuboMovimiento;
+  const desde = Math.min(diaInicio, diaFin), hasta = Math.max(diaInicio, diaFin);
+
+  // Limpia el sombreado visual, quede o no seleccionado un rango real
+  const hoy = new Date().getDate();
+  filaTr.querySelectorAll('td[data-sombreada="1"]').forEach(td => {
+    const d = parseInt(td.dataset.dia, 10);
+    td.style.backgroundColor = (d === hoy) ? 'var(--green-l)' : '';
+    td.style.outline = '';
+    td.dataset.sombreada = '0';
+  });
+
+  arrastreSel = null;
+
+  if (!huboMovimiento) return; // fue un clic simple: lo maneja el listener de click normal
+
+  arrastreSuprimirClick = true; // el click que el navegador dispara después de soltar no debe reabrir el modal de un solo día
+  setTimeout(() => { arrastreSuprimirClick = false; }, 50);
+
+  // Solo entran al rango los días editables — los bloqueados se saltan solos
+  const dias = [];
+  for (let d = desde; d <= hasta; d++) {
+    const td = filaTr.querySelector(`td[data-dia="${d}"]`);
+    if (td && td.dataset.arrastrable === '1') dias.push(d);
+  }
+  if (dias.length) abrirModalEditarNovedadDias(agente, dias, idxAgente);
+}
+
+document.addEventListener('mouseup', finalizarArrastre);
+document.addEventListener('mouseleave', () => { if (arrastreSel) finalizarArrastre(); });
+
 function renderizarTablaNovedades(diaHoy) {
   const tabla = $('tabla-novedades');
   const thead = tabla.querySelector('thead tr');
@@ -1534,6 +1611,7 @@ function renderizarTablaNovedades(diaHoy) {
         td.style.textAlign = 'center';
         td.style.padding = '6px 3px';
         td.style.cursor = 'pointer';
+        td.dataset.dia = String(dia);
         
         const valor = agente.novedadesPorDia && agente.novedadesPorDia[String(dia)] ? agente.novedadesPorDia[String(dia)] : '';
         td.textContent = valor || '—';
@@ -1554,20 +1632,66 @@ function renderizarTablaNovedades(diaHoy) {
           td.style.fontWeight = '600';
         }
         
-        // Evento click (solo si hoy o admin)
-        if (!bloqueado || esAdmin()) {
+        const editable = !bloqueado || esAdmin();
+        td.dataset.arrastrable = editable ? '1' : '0';
+
+        // Evento click (solo si hoy o admin) — clic simple sigue editando un solo día
+        if (editable) {
           td.addEventListener('click', () => {
+            if (arrastreSuprimirClick) return;
             abrirModalEditarNovedad(agente, dia, idx);
           });
           td.addEventListener('mouseover', () => {
-            if (!bloqueado || esAdmin()) td.style.backgroundColor = 'var(--blue-l)';
+            if (arrastreSel) { extenderArrastre(idx, dia, tr); return; }
+            td.style.backgroundColor = 'var(--blue-l)';
           });
           td.addEventListener('mouseout', () => {
+            if (arrastreSel) return; // no perder el sombreado mientras se arrastra
             if (dia === new Date().getDate()) {
               td.style.backgroundColor = 'var(--green-l)';
             } else {
               td.style.backgroundColor = '';
             }
+          });
+          // Arrastre horizontal (sombrear varios días de esta fila para aplicarles
+          // el mismo código de una sola vez) — mouse
+          td.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // evita que se seleccione el texto de la fila al arrastrar
+            iniciarPosibleArrastre(agente, idx, dia, tr);
+          });
+          // Arrastre horizontal — touch (mantener presionado ~0.35s para no
+          // chocar con el gesto normal de deslizar la tabla para hacer scroll)
+          td.addEventListener('touchstart', (e) => {
+            const t = e.touches[0];
+            touchInicioPos = { x: t.clientX, y: t.clientY };
+            touchArrastreActivo = false;
+            clearTimeout(touchTimerArrastre);
+            touchTimerArrastre = setTimeout(() => {
+              touchArrastreActivo = true;
+              iniciarPosibleArrastre(agente, idx, dia, tr);
+              if (navigator.vibrate) navigator.vibrate(15);
+            }, 350);
+          }, { passive: true });
+          td.addEventListener('touchmove', (e) => {
+            if (touchArrastreActivo) {
+              e.preventDefault();
+              const t = e.touches[0];
+              const destino = document.elementFromPoint(t.clientX, t.clientY);
+              const tdDestino = destino && destino.closest('td[data-dia]');
+              if (tdDestino && tdDestino.parentElement === tr) {
+                extenderArrastre(idx, parseInt(tdDestino.dataset.dia, 10), tr);
+              }
+            } else if (touchInicioPos) {
+              const t = e.touches[0];
+              if (Math.abs(t.clientX - touchInicioPos.x) > 10 || Math.abs(t.clientY - touchInicioPos.y) > 10) {
+                clearTimeout(touchTimerArrastre); // se movió antes de tiempo: es un scroll normal, no una selección
+              }
+            }
+          }, { passive: false });
+          td.addEventListener('touchend', () => {
+            clearTimeout(touchTimerArrastre);
+            if (touchArrastreActivo) { finalizarArrastre(); touchArrastreActivo = false; }
+            touchInicioPos = null;
           });
         } else {
           // Día bloqueado: permitir al usuario solicitar desbloqueo
@@ -2019,6 +2143,7 @@ function responderConfirmacion(valor) {
 
 let modalAgenteEdicion = null;
 let modalDiaEdicion = null;
+let modalDiasEdicion = null;  // arreglo de días cuando se edita un rango sombreado (uno o más)
 let modalIdxEdicion = null;
 let modalEsEdicionDeCierre = false;
 let resumenGeneralCache = null;
@@ -2044,24 +2169,43 @@ function actualizarObsSegunCodigo() {
 }
 
 function abrirModalEditarNovedad(agente, dia, idx) {
+  abrirModalEditarNovedadDias(agente, [dia], idx);
+}
+
+// dias: uno o más días del MISMO agente (sombreado horizontal). Con varios,
+// el código y la observación elegidos se aplican a todos a la vez.
+function abrirModalEditarNovedadDias(agente, dias, idx) {
+  const diasOrd = [...dias].sort((a, b) => a - b);
+
   modalAgenteEdicion = agente;
-  modalDiaEdicion = dia;
+  modalDiasEdicion = diasOrd;
+  modalDiaEdicion = diasOrd[0]; // se mantiene por compatibilidad con el flujo de mes cerrado (siempre 1 día)
   modalIdxEdicion = idx;
   modalEsEdicionDeCierre = false;
-  
+
   const modal = $('modal-editar-novedad');
   const sub = $('modal-novedad-sub');
   const codigo = $('modal-novedad-codigo');
   const obs = $('modal-novedad-obs');
-  
+
   poblarSelectCodigos(codigo);
-  
-  sub.textContent = `Día ${dia} — ${agente.apellidosNombres}`;
-  codigo.value = (agente.novedadesPorDia && agente.novedadesPorDia[String(dia)]) || '';
-  obs.value = agente.observaciones || (codigo.value ? (CODIGOS_DESC[codigo.value] || '') : '');
-  
+
+  sub.textContent = diasOrd.length > 1
+    ? `Días ${diasOrd[0]} a ${diasOrd[diasOrd.length - 1]} (${diasOrd.length} días) — ${agente.apellidosNombres}`
+    : `Día ${diasOrd[0]} — ${agente.apellidosNombres}`;
+
+  if (diasOrd.length === 1) {
+    codigo.value = (agente.novedadesPorDia && agente.novedadesPorDia[String(diasOrd[0])]) || '';
+    obs.value = agente.observaciones || (codigo.value ? (CODIGOS_DESC[codigo.value] || '') : '');
+  } else {
+    // Con varios días a la vez puede haber códigos distintos entre ellos —
+    // arranca vacío en vez de precargar el de uno solo.
+    codigo.value = '';
+    obs.value = '';
+  }
+
   hide('modal-novedad-error');
-  
+
   modal.style.display = 'flex';
   codigo.focus();
 }
@@ -2071,6 +2215,7 @@ function cerrarModalNovedad() {
   hide('modal-novedad-error');
   modalAgenteEdicion = null;
   modalDiaEdicion = null;
+  modalDiasEdicion = null;
   modalIdxEdicion = null;
 }
 
@@ -2104,12 +2249,16 @@ async function guardarNovedad() {
   }
   
   const obs = $('modal-novedad-obs').value.trim() || CODIGOS_DESC[codigoNorm] || '';
-  
+  const diasAEditar = (modalDiasEdicion && modalDiasEdicion.length) ? modalDiasEdicion : [modalDiaEdicion];
+  const descDias = diasAEditar.length > 1
+    ? `Días ${diasAEditar[0]}-${diasAEditar[diasAEditar.length - 1]} (${diasAEditar.length} días)`
+    : `Día ${diasAEditar[0]}`;
+
   // Actualizar en memoria
   if (!modalAgenteEdicion.novedadesPorDia) {
     modalAgenteEdicion.novedadesPorDia = {};
   }
-  modalAgenteEdicion.novedadesPorDia[String(modalDiaEdicion)] = codigoNorm;
+  diasAEditar.forEach(d => { modalAgenteEdicion.novedadesPorDia[String(d)] = codigoNorm; });
   modalAgenteEdicion.observaciones = obs;
 
   // Guardar en Firestore
@@ -2119,6 +2268,8 @@ async function guardarNovedad() {
       // el documento de ese período (no en el actual). El día queda abierto: el
       // desbloqueo dado por el administrador se mantiene hasta que él lo retire,
       // así se pueden hacer varias correcciones seguidas sin volver a solicitarlo.
+      // (Este flujo siempre edita un solo día — el sombreado por arrastre solo
+      // aplica sobre el mes en curso, no sobre meses ya cerrados.)
       const { area, periodo, data } = cierreMesData;
       const diasDesbloqueados = data.diasDesbloqueados || [];
 
@@ -2143,7 +2294,7 @@ async function guardarNovedad() {
       return;
     }
 
-    actualizarDiaCompletado(modalDiaEdicion);
+    diasAEditar.forEach(d => actualizarDiaCompletado(d));
     const novedadesRef = window._fb.doc(db, 'novedades', areaActual, mesActual, 'datos');
 
     // El día NO se vuelve a bloquear al completarlo: queda abierto mientras esté
@@ -2158,22 +2309,22 @@ async function guardarNovedad() {
       ultimaModificacion: new Date()
     });
     
-    // Log auditoría
+    // Log auditoría — una sola entrada consolidada aunque hayan sido varios días
     await registrarEnAuditoria(
       'modificar_novedad',
       areaActual,
       usuario.email,
-      modalDiaEdicion,
+      diasAEditar.length === 1 ? diasAEditar[0] : null,
       mesActual,
-      { codigo: codigoNorm, observaciones: obs },
-      `Modificación: ${modalAgenteEdicion.apellidosNombres} - Día ${modalDiaEdicion} - ${codigoNorm}`
+      { codigo: codigoNorm, observaciones: obs, dias: diasAEditar },
+      `Modificación: ${modalAgenteEdicion.apellidosNombres} - ${descDias} - ${codigoNorm}`
     );
     
     // Actualizar tabla
     renderizarTablaNovedades(new Date().getDate());
     verificarDiasPendientes();
     
-    toast('✅ Novedad guardada', 'ok');
+    toast(diasAEditar.length > 1 ? `✅ Novedad guardada en ${diasAEditar.length} días` : '✅ Novedad guardada', 'ok');
     cerrarModalNovedad();
     
   } catch(e) {
