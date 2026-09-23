@@ -1611,6 +1611,8 @@ function renderizarTablaNovedades(diaHoy) {
         td.style.textAlign = 'center';
         td.style.padding = '6px 3px';
         td.style.cursor = 'pointer';
+        td.style.userSelect = 'none';
+        td.style.webkitUserSelect = 'none';
         td.dataset.dia = String(dia);
         
         const valor = agente.novedadesPorDia && agente.novedadesPorDia[String(dia)] ? agente.novedadesPorDia[String(dia)] : '';
