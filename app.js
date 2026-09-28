@@ -5954,8 +5954,28 @@ async function aplicarActualizacionAreas() {
     periodo
   );
 
+  // ── Mes cerrado en el área anterior: esos efectivos se omiten por completo ──
+  let cambiosAplicar = pend.cambios;
+  let omitidosCerrados = [];
+  let avisoCerrados = '';
+  try {
+    const r = await separarCambiosPorMesCerrado(pend.cambios, periodo);
+    cambiosAplicar = r.permitidos;
+    omitidosCerrados = r.bloqueados;
+  } catch(e) {
+    console.error('No se pudo verificar meses cerrados en la actualización por Excel:', e);
+  }
+  if (omitidosCerrados.length) {
+    const lista = omitidosCerrados.slice(0, 15).map(b => `· ${b.codigo} — ${b.nombre} (${b.origen})`).join('\n');
+    avisoCerrados = `⚠️ ${omitidosCerrados.length} efectivo(s) NO se moverán porque el mes ${periodo} de su área actual ya está cerrado (informe generado):\n${lista}${omitidosCerrados.length > 15 ? `\n…y ${omitidosCerrados.length - 15} más.` : ''}\n\n`;
+  }
+  if (!cambiosAplicar.length) {
+    toast(`❌ No se aplicó ningún cambio: el mes ${periodo} de todas las áreas actuales ya está cerrado (informe generado)`, 'err');
+    return;
+  }
+
   const confirmar = await confirmarAccion(
-    `Se cambiará el área de ${pend.cambios.length} efectivo(s).\n\nNo se borra ningún registro. En Novedades de este mes, cada uno quedará registrado en AMBAS áreas: los días antes del ${diaCorte} en su área anterior (con lo ya cargado) y desde el ${diaCorte} en la nueva área.\n\n¿Confirma?`,
+    avisoCerrados + `Se cambiará el área de ${cambiosAplicar.length} efectivo(s).\n\nNo se borra ningún registro. En Novedades de este mes, cada uno quedará registrado en AMBAS áreas: los días antes del ${diaCorte} en su área anterior (con lo ya cargado) y desde el ${diaCorte} en la nueva área.\n\n¿Confirma?`,
     'Actualizar áreas desde Excel'
   );
   if (!confirmar) return;
@@ -5964,8 +5984,8 @@ async function aplicarActualizacionAreas() {
   try {
     const tamanioLote = 100;
     let aplicados = 0;
-    for (let i = 0; i < pend.cambios.length; i += tamanioLote) {
-      const lote = pend.cambios.slice(i, i + tamanioLote);
+    for (let i = 0; i < cambiosAplicar.length; i += tamanioLote) {
+      const lote = cambiosAplicar.slice(i, i + tamanioLote);
       await Promise.all(lote.map(c =>
         window._fb.setDoc(window._fb.doc(db, 'personal', c.id), {
           area: c.areaNueva,
@@ -5973,7 +5993,7 @@ async function aplicarActualizacionAreas() {
         }, { merge: true })
       ));
       aplicados += lote.length;
-      cont.innerHTML = `⏳ Aplicando cambios... ${aplicados} / ${pend.cambios.length}`;
+      cont.innerHTML = `⏳ Aplicando cambios... ${aplicados} / ${cambiosAplicar.length}`;
     }
 
     // Sumar al catálogo las áreas nuevas que no existían (unión, nunca reemplazo)
@@ -5981,7 +6001,7 @@ async function aplicarActualizacionAreas() {
       const areasRef = window._fb.doc(db, 'sistema', 'areas_novedades');
       const areasSnap = await window._fb.getDoc(areasRef);
       const previas = areasSnap.exists() ? (areasSnap.data().lista || []) : [];
-      const union = Array.from(new Set([...previas, ...pend.cambios.map(c => c.areaNueva)])).sort();
+      const union = Array.from(new Set([...previas, ...cambiosAplicar.map(c => c.areaNueva)])).sort();
       if (union.length !== previas.length) {
         await window._fb.setDoc(areasRef, { lista: union, ultimaActualizacion: new Date() });
       }
@@ -5994,7 +6014,7 @@ async function aplicarActualizacionAreas() {
     let resultadoCorte = { procesados: 0 };
     try {
       resultadoCorte = await aplicarCortesDeArea(
-        pend.cambios.map(c => ({
+        cambiosAplicar.map(c => ({
           codigo: c.codigo, grado: c.grado, apellidos: c.apellidos, nombres: c.nombres,
           areaAnterior: c.areaAnterior, areaNueva: c.areaNueva
         })),
@@ -6007,21 +6027,22 @@ async function aplicarActualizacionAreas() {
 
     await registrarEnAuditoria(
       'actualizar_areas_personal', null, usuario.email, null, null,
-      { cambios: pend.cambios.length, sinCambios: pend.sinCambios, noEncontrados: pend.noEncontrados.length,
-        diaCorte, partidosEnNovedades: resultadoCorte.procesados, detalle: pend.cambios.slice(0, 200) },
-      `Actualización de áreas desde Excel: ${pend.cambios.length} efectivos cambiaron de área (corte día ${diaCorte}, ${resultadoCorte.procesados} partidos en Novedades de ${periodo}), ${pend.noEncontrados.length} códigos no encontrados`
+      { cambios: cambiosAplicar.length, omitidosMesCerrado: omitidosCerrados.map(b => ({ codigo: b.codigo, area: b.origen })), sinCambios: pend.sinCambios, noEncontrados: pend.noEncontrados.length,
+        diaCorte, partidosEnNovedades: resultadoCorte.procesados, detalle: cambiosAplicar.slice(0, 200) },
+      `Actualización de áreas desde Excel: ${cambiosAplicar.length} efectivos cambiaron de área (corte día ${diaCorte}, ${resultadoCorte.procesados} partidos en Novedades de ${periodo}), ${pend.noEncontrados.length} códigos no encontrados`
     );
 
     cont.innerHTML = `
-      ✅ <strong>${pend.cambios.length} área(s) actualizadas</strong><br>
+      ✅ <strong>${cambiosAplicar.length} área(s) actualizadas</strong><br>
       · ${pend.sinCambios} efectivo(s) ya estaban correctos<br>
       · ${pend.noEncontrados.length} código(s) omitidos por no existir en la base<br>
       · ${resultadoCorte.procesados} efectivo(s) partidos en Novedades de ${periodo}: días antes del ${diaCorte} en su área anterior, desde el ${diaCorte} en la nueva<br>
       · No se borró ningún registro.
+      ${omitidosCerrados.length ? `<div style="margin-top:10px;padding:10px;background:#fff1f2;border:1px solid #fda4af;border-radius:8px;"><strong style="color:var(--red);">${omitidosCerrados.length} efectivo(s) omitidos: el mes ${periodo} de su área actual ya está cerrado (informe generado). No se modificó nada de ellos.</strong><div style="margin-top:6px;max-height:140px;overflow:auto;font-family:monospace;font-size:11px;">${omitidosCerrados.map(b => `${b.codigo} — ${b.nombre} (${b.origen})`).join('<br>')}</div></div>` : ''}
     `;
     hide('btn-aplicar-areas');
     actualizacionAreasPendiente = null;
-    toast(`✅ ${pend.cambios.length} áreas actualizadas · ${resultadoCorte.procesados} partidos en Novedades desde el día ${diaCorte}`, 'ok');
+    toast(`✅ ${cambiosAplicar.length} áreas actualizadas · ${resultadoCorte.procesados} partidos en Novedades desde el día ${diaCorte}`, 'ok');
     cargarDirectorioPersonal();
   } catch(e) {
     console.error(e);
@@ -6445,15 +6466,44 @@ async function aplicarCambioAreaLote() {
     : ajustarDiaAlMes(parseInt(($('personal-cambio-lote-corte') || {}).value, 10) || obtenerFechaParts().dia, periodo);
   const areaNuevaSanitizada = sanitizarNombreArea(nuevaArea);
 
+  // ── Mes cerrado en el área anterior: esos agentes se omiten por completo ──
+  let idsPermitidos = Array.from(personalSeleccionados);
+  let avisoCerrados = '';
+  let omitidosCerrados = [];
+  try {
+    const infoSel = idsPermitidos
+      .map(id => personalDirectorioCache.find(x => x.id === id))
+      .filter(Boolean);
+    const { bloqueados } = await separarCambiosPorMesCerrado(
+      infoSel
+        .filter(p => sanitizarNombreArea(p.area || '') !== areaNuevaSanitizada)
+        .map(p => ({ id: p.id, codigo: p.codigo, nombre: `${p.apellidos || ''} ${p.nombres || ''}`.trim(), areaAnterior: p.area, areaNueva: areaNuevaSanitizada })),
+      periodo
+    );
+    if (bloqueados.length) {
+      omitidosCerrados = bloqueados;
+      const idsB = new Set(bloqueados.map(b => b.id));
+      idsPermitidos = idsPermitidos.filter(id => !idsB.has(id));
+      const lista = bloqueados.slice(0, 15).map(b => `· ${b.codigo} — ${b.nombre} (${b.origen})`).join('\n');
+      avisoCerrados = `⚠️ ${bloqueados.length} agente(s) NO se moverán porque el mes ${periodo} de su área actual ya está cerrado (informe generado):\n${lista}${bloqueados.length > 15 ? `\n…y ${bloqueados.length - 15} más.` : ''}\n\n`;
+    }
+  } catch(e) {
+    console.error('No se pudo verificar meses cerrados en el cambio en lote:', e);
+  }
+  if (!idsPermitidos.length) {
+    toast(`❌ Ningún agente se movió: el mes ${periodo} de su área actual ya está cerrado (informe generado)`, 'err');
+    return;
+  }
+
   if (!(await confirmarAccion(
-    esCorreccion
-      ? `¿Corregir el área de ${personalSeleccionados.size} agente(s) a "${nuevaArea}"?\n\nNo es un traslado: el mes completo de Novedades pasará a la nueva área, sin partir días.`
-      : `¿Cambiar el área de ${personalSeleccionados.size} agente(s) a "${nuevaArea}"?\n\nEn Novedades de este mes, los días antes del ${diaCorte} quedan en su área anterior y desde el ${diaCorte} pasan a la nueva área.`,
+    avisoCerrados + (esCorreccion
+      ? `¿Corregir el área de ${idsPermitidos.length} agente(s) a "${nuevaArea}"?\n\nNo es un traslado: el mes completo de Novedades pasará a la nueva área, sin partir días.`
+      : `¿Cambiar el área de ${idsPermitidos.length} agente(s) a "${nuevaArea}"?\n\nEn Novedades de este mes, los días antes del ${diaCorte} quedan en su área anterior y desde el ${diaCorte} pasan a la nueva área.`),
     esCorreccion ? 'Corregir área en lote' : 'Cambiar área en lote'
   ))) return;
 
   try {
-    const ids = Array.from(personalSeleccionados);
+    const ids = idsPermitidos;
     const seleccionInfo = ids
       .map(id => personalDirectorioCache.find(x => x.id === id))
       .filter(Boolean);
@@ -6486,7 +6536,8 @@ async function aplicarCambioAreaLote() {
 
     await registrarEnAuditoria(
       esCorreccion ? 'corregir_area_lote' : 'cambio_area_lote', areaNuevaSanitizada, usuario.email, null, null,
-      { cantidad: ids.length, diaCorte, partidosEnNovedades: resultadoCorte.procesados, esCorreccion },
+      { cantidad: ids.length, diaCorte, partidosEnNovedades: resultadoCorte.procesados, esCorreccion,
+        omitidosMesCerrado: omitidosCerrados.map(b => ({ codigo: b.codigo, area: b.origen })) },
       esCorreccion
         ? `Corrección de área en lote (no traslado): ${ids.length} agentes → ${areaNuevaSanitizada} (mes ${periodo} completo, ${resultadoCorte.procesados} corregidos en Novedades)`
         : `Cambio de área en lote: ${ids.length} agentes → ${areaNuevaSanitizada} (corte día ${diaCorte}, ${resultadoCorte.procesados} partidos en Novedades de ${periodo})`
@@ -6498,6 +6549,9 @@ async function aplicarCambioAreaLote() {
         : `✅ ${ids.length} agentes actualizados a "${areaNuevaSanitizada}" · ${resultadoCorte.procesados} partidos en Novedades desde el día ${diaCorte}`,
       'ok'
     );
+    if (omitidosCerrados.length) {
+      toast(`⚠️ ${omitidosCerrados.length} agente(s) se omitieron por tener el mes ${periodo} cerrado en su área actual`, 'err');
+    }
     limpiarSeleccionPersonal();
     cargarDirectorioPersonal();
   } catch(e) {
@@ -6605,7 +6659,45 @@ function cerrarModalPersonal() {
      agente solo en esa área.
    · Aplica a los tres caminos de cambio de área: edición individual,
      cambio en lote y actualización masiva por Excel.
+   · El agente NO desaparece del área anterior en un traslado real: si el
+     corte es posterior al día 1, su ficha se conserva en esa área aunque
+     los días previos estén en blanco (en blanco = presencia normal), para
+     que siga contando en el EFECTIVO y en el reporte del área anterior.
+     Solo se retira del área anterior cuando no hay días previos al corte
+     (corrección por error de digitación, o corte en el día 1).
+   · Si el mes del área anterior ya está CERRADO (informe generado), no se
+     toca nada de ese agente: ni Novedades ni la Base de Personal. En el
+     lote y en Excel se omiten esos agentes y se informa cuáles fueron.
 ═════════════════════════════════════════ */
+
+/* Revisa, para una lista de cambios, cuáles tienen el mes CERRADO en su
+   área anterior. Lee cada área una sola vez.
+   cambios: [{ areaAnterior, areaNueva, ...cualquier otro dato }]
+   Devuelve { permitidos, bloqueados } — cada bloqueado lleva `origen`
+   (nombre sanitizado del área anterior con el mes cerrado). */
+async function separarCambiosPorMesCerrado(cambios, periodo) {
+  const cerradas = new Map(); // areaSanitizada -> boolean
+  const permitidos = [];
+  const bloqueados = [];
+  for (const c of (cambios || [])) {
+    const origen = c.areaAnterior ? sanitizarNombreArea(c.areaAnterior) : '';
+    if (!origen || origen === sanitizarNombreArea(c.areaNueva || '')) { permitidos.push(c); continue; }
+    if (!cerradas.has(origen)) {
+      let cerrada = false;
+      try {
+        const snap = await window._fb.getDoc(window._fb.doc(db, 'novedades', origen, periodo, 'datos'));
+        cerrada = snap.exists() && snap.data().estado === 'cerrado';
+      } catch (e) {
+        // Ante un error de lectura no se asume "cerrado": el guardado normal seguirá su curso
+        console.warn('No se pudo verificar el cierre del área ' + origen + ':', e);
+      }
+      cerradas.set(origen, cerrada);
+    }
+    if (cerradas.get(origen)) bloqueados.push({ ...c, origen });
+    else permitidos.push(c);
+  }
+  return { permitidos, bloqueados };
+}
 
 function _normCodigoAgente(c) {
   return String(c || '').replace(/\s+/g, '').toUpperCase();
@@ -6647,7 +6739,13 @@ async function aplicarCortesDeArea(cambios, diaCorte, periodo) {
   if (!cambiosSaneados.length) return { procesados: 0, areas: new Set() };
 
   // 2) Aplicar cada cambio en memoria sobre los documentos ya leídos.
+  const modificadas = new Set();
+  let omitidosMesCerrado = 0;
   for (const c of cambiosSaneados) {
+    // Red de seguridad: si el mes del área anterior ya está cerrado no se
+    // toca nada (los llamadores ya lo filtran antes de guardar la Base de
+    // Personal; esto cubre una carrera con un cierre reciente).
+    if (c.origen && docsPorArea.get(c.origen)?.data?.estado === 'cerrado') { omitidosMesCerrado++; continue; }
     const buscado = _normCodigoAgente(c.codigo);
     const nombreCompleto = `${c.apellidos || ''} ${c.nombres || ''}`.trim() || c.nombre || '';
     let diasTrasladados = {};
@@ -6663,10 +6761,13 @@ async function aplicarCortesDeArea(cambios, diaCorte, periodo) {
           if (Number(dia) < diaCorte) diasConservados[dia] = val;
           else diasTrasladados[dia] = val;
         });
-        if (Object.keys(diasConservados).length === 0) {
-          // No le queda ningún día en la vieja área (corte desde el día 1,
-          // o el mes recién empezaba) — se lo saca del todo, en vez de
-          // dejar una ficha con todos los días en blanco.
+        modificadas.add(c.origen);
+        if (diaCorte <= 1) {
+          // No hay días previos al corte (corrección por error de digitación,
+          // o corte en el día 1): se lo saca del área anterior.
+          // Si el corte es posterior al día 1 el agente SÍ estuvo en esa área
+          // esos días — aunque estén en blanco (presencia normal) — así que su
+          // ficha se conserva para que siga contando en el EFECTIVO y en el reporte.
           entradaOrigen.agentes.splice(idx, 1);
         } else {
           entradaOrigen.agentes[idx] = {
@@ -6680,6 +6781,7 @@ async function aplicarCortesDeArea(cambios, diaCorte, periodo) {
     }
 
     const entradaDestino = docsPorArea.get(c.destino);
+    modificadas.add(c.destino);
     const idxD = entradaDestino.agentes.findIndex(a => _normCodigoAgente(a.codigo) === buscado);
     if (idxD !== -1) {
       // Ya tenía registro este mes en el área destino (p.ej. vuelve a un
@@ -6703,7 +6805,8 @@ async function aplicarCortesDeArea(cambios, diaCorte, periodo) {
   }
 
   // 3) Guardar cada área modificada una sola vez.
-  for (const [, info] of docsPorArea.entries()) {
+  for (const [area, info] of docsPorArea.entries()) {
+    if (!modificadas.has(area)) continue; // solo se escriben las áreas realmente tocadas
     await window._fb.setDoc(info.ref, {
       agentes: info.agentes,
       estado: (info.data && info.data.estado) || 'activo',
@@ -6715,7 +6818,7 @@ async function aplicarCortesDeArea(cambios, diaCorte, periodo) {
     }, { merge: true });
   }
 
-  return { procesados: cambiosSaneados.length, areas: new Set(docsPorArea.keys()) };
+  return { procesados: cambiosSaneados.length - omitidosMesCerrado, omitidosMesCerrado, areas: new Set(docsPorArea.keys()) };
 }
 
 async function guardarRegistroPersonal() {
@@ -6732,6 +6835,25 @@ async function guardarRegistroPersonal() {
 
   try {
     const areaSanitizada = sanitizarNombreArea(area);
+
+    // ── Mes cerrado en el área anterior: no se modifica nada ──
+    {
+      const previo = modalPersonalIdEdicion
+        ? personalDirectorioCache.find(x => x.id === modalPersonalIdEdicion)
+        : null;
+      if (previo && previo.area && sanitizarNombreArea(previo.area) !== areaSanitizada) {
+        const periodoChk = obtenerFechaParts().periodo;
+        const { bloqueados } = await separarCambiosPorMesCerrado(
+          [{ areaAnterior: previo.area, areaNueva: areaSanitizada }], periodoChk
+        );
+        if (bloqueados.length) {
+          errorEl.textContent = `No se pudo cambiar el área: el mes ${periodoChk} de "${bloqueados[0].origen}" ya está cerrado (informe generado). Cambiarla alteraría un informe ya emitido, por eso no se modificó nada.`;
+          show('modal-personal-error');
+          return;
+        }
+      }
+    }
+
     await window._fb.setDoc(window._fb.doc(db, 'personal', codigo), {
       codigo, grado, apellidos, nombres, area: areaSanitizada,
       ultimaActualizacion: new Date()
