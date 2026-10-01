@@ -333,7 +333,7 @@
   <div id="vista-envios" class="vista" style="display:none">
     <div class="page-hero">
       <h1 class="page-hero-titulo">Registro de Envíos</h1>
-      <p class="page-hero-sub">Hola, <strong id="hero-nombre"></strong>. Suba su archivo comprimido (RAR o ZIP) y registre los detalles de cada envío.</p>
+      <p class="page-hero-sub">Hola, <strong id="hero-nombre"></strong>. Suba su archivo (RAR, ZIP o PDF) y registre los detalles de cada envío.</p>
     </div>
     <div class="page-body">
 
@@ -344,7 +344,7 @@
           </div>
           <div>
             <div class="envio-card-titulo">Nuevo Envío</div>
-            <div class="envio-card-sub">Complete los datos y adjunte el archivo comprimido (RAR o ZIP) correspondiente.</div>
+            <div class="envio-card-sub">Complete los datos y adjunte el archivo (RAR, ZIP o PDF) correspondiente.</div>
           </div>
         </div>
 
@@ -363,15 +363,15 @@
         </div>
 
         <div class="form-field">
-          <label class="form-label">Archivo Comprimido (RAR / ZIP)</label>
+          <label class="form-label">Archivo (RAR / ZIP / PDF)</label>
           <div id="dropzone" class="dropzone">
             <div class="dz-upload-ico">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             </div>
             <span class="dz-label">Haga clic para seleccionar</span>
-            <span class="dz-hint">Solo .rar o .zip</span>
+            <span class="dz-hint">Solo .rar, .zip o .pdf</span>
           </div>
-          <input type="file" id="file-input" accept=".rar,.zip">
+          <input type="file" id="file-input" accept=".rar,.zip,.pdf">
           <div id="file-preview" class="file-preview">
             <div class="fp-ico">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -468,7 +468,7 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Registrar Envío
         </button>
-        <p id="enviar-hint" style="text-align:center;font-size:12px;color:#ef4444;margin-top:6px;">Suba el archivo comprimido (RAR o ZIP) para habilitar el envío</p>
+        <p id="enviar-hint" style="text-align:center;font-size:12px;color:#ef4444;margin-top:6px;">Suba el archivo (RAR, ZIP o PDF) para habilitar el envío</p>
       </div>
 
       <!-- ── MIS ENVÍOS ── -->
@@ -1995,6 +1995,6 @@
   });
 </script>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=20260930"></script>
 </body>
 </html>
