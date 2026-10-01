@@ -92,10 +92,13 @@ body.dark-mode nav{background:linear-gradient(135deg,#08101f 0%,#0f1a35 60%,#131
   min-height:calc(100vh - 48px);
   padding:40px 16px;
   background:var(--bg);
-}
+}/* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .login-hero{display:none;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .login-titulo{display:none;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .login-sub{display:none;}
+*/
 .login-card{background:var(--white);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shl);padding:0;width:100%;max-width:760px;animation:up .35s ease;display:flex;overflow:hidden;min-height:400px;transition:background .25s,border-color .25s;}
 .login-card h2{font-size:20px;font-weight:800;margin-bottom:6px;color:var(--txt);}
 .login-card-desc{font-size:12px;color:var(--txt2);margin-bottom:20px;line-height:1.6;}
@@ -296,8 +299,9 @@ tbody tr:hover td{background:var(--bg);color:var(--txt);}
 .td-peso{font-size:11px;color:var(--txt2);white-space:nowrap;}
 .td-fecha{font-size:11px;color:var(--txt2);white-space:nowrap;}
 .td-hora{font-size:11px;font-weight:600;color:var(--txt2);white-space:nowrap;}
-.td-vacio{text-align:center;color:var(--txt3);padding:28px;}
+.td-vacio{text-align:center;color:var(--txt3);padding:28px;}/* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .td-comprimido{font-size:10px;color:var(--green);font-weight:600;margin-top:2px;}
+*/
 .link-archivo{color:var(--blue);text-decoration:none;font-weight:600;display:flex;align-items:center;gap:3px;font-size:12px;}
 .link-archivo:hover{text-decoration:underline;}
 .badge-area{display:inline-block;background:var(--blue-l);color:var(--blue);border:1px solid var(--blue-m);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:700;white-space:nowrap;}
@@ -454,19 +458,30 @@ tbody tr:hover td{background:var(--bg);color:var(--txt);}
   }
 }
 
-/* ── AUTH TABS ─────────────────────────────────── */
+/* ── AUTH TABS ─────────────────────────────────── *//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .auth-tabs{display:flex;background:var(--bg);border-radius:8px;padding:3px;margin-bottom:20px;gap:3px;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .auth-tab{flex:1;padding:7px 0;border:none;background:transparent;border-radius:6px;font-family:var(--font-brand);font-size:13px;font-weight:600;color:var(--txt2);cursor:pointer;transition:all .15s;}
-.auth-tab.active{background:var(--white);color:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.1);}
+*/
+.auth-tab.active{background:var(--white);color:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.1);}/* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .auth-divider{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--txt3);font-size:11px;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .auth-divider::before,.auth-divider::after{content:'';flex:1;height:1px;background:var(--border);}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .form-input{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--font-brand);font-size:14px;color:var(--txt);background:var(--white);transition:border-color .15s;box-sizing:border-box;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .form-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1);}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .form-input::placeholder{color:var(--txt3);}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .btn-primary-full{width:100%;padding:11px;background:var(--blue);color:#fff;border:none;border-radius:var(--r);font-family:var(--font-brand);font-size:14px;font-weight:700;cursor:pointer;transition:background .15s;margin-top:4px;letter-spacing:.05em;text-transform:uppercase;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .btn-primary-full:hover{background:var(--blue-d);}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .btn-link{background:none;border:none;color:var(--blue);font-family:var(--font-brand);font-size:13px;cursor:pointer;padding:0;text-decoration:underline;}
+*//* [sin uso detectado 2026-10-01 — revisar antes de borrar]
 .btn-link:hover{color:var(--blue-d);}
+*/
 
 /* Login responsive móvil */
 @media(max-width:640px){

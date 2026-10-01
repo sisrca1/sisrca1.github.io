@@ -818,17 +818,6 @@ function validarCodigo(codigo) {
   return CODIGOS_VALIDOS.some(c => normalizarCodigo(c) === norm);
 }
 
-function obtenerCodigoValidoSimilar(entrada) {
-  const norm = normalizarCodigo(entrada);
-  // Auto-corrección simple: si es similar a un código válido, corregir
-  for (const codigo of CODIGOS_VALIDOS) {
-    if (codigo.includes(norm) || norm.includes(codigo.slice(0, 1))) {
-      return codigo;
-    }
-  }
-  return null;
-}
-
 /* ═════════════════════════════════════════
    MÓDULO NOVEDADES — Cargar datos actuales
 ═════════════════════════════════════════ */
@@ -1132,6 +1121,13 @@ async function cargarNovedadesActuales() {
     const prevTieneDatos = docAnterior.exists() && (docAnterior.data().agentes || []).length > 0;
     const prevCerrado    = prevTieneDatos && docAnterior.data().estado === 'cerrado';
 
+    // Límite de regeneraciones del informe ya cerrado: el cierre original cuenta
+    // como el intento 1, quedan 2 más para el secretario (ej. generó en el
+    // celular, no encontró el archivo, y necesita repetirlo desde la PC).
+    const MAX_INTENTOS_REPORTE = 3;
+    const intentosUsadosReporte = prevCerrado ? (docAnterior.data().intentosReporte || 1) : 0;
+    const intentosRestantesReporte = MAX_INTENTOS_REPORTE - intentosUsadosReporte;
+
     // Panel "Generar Reporte" (arriba de la tabla):
     // - Admin: acceso total, cualquier área/mes/año, en cualquier momento.
     // - Usuario con permiso "reporte_elegir_mes": igual que el admin (puede elegir mes/año).
@@ -1238,12 +1234,23 @@ async function cargarNovedadesActuales() {
     // `return` cortaba para todos por igual y dejaba al admin sin ver la tabla.
     const exentoDeBloqueo = esAdmin() || esSupervisor();
 
-    if (cierrePendiente && bloqueoActivo && !exentoDeBloqueo) {
+    // Prórroga de cierre: el administrador habilitó a esta área a completar el mes
+    // anterior. Mientras esté activa no se bloquea el mes en curso.
+    const enProrroga = cierrePendiente && !!(docAnterior.data().prorroga && docAnterior.data().prorroga.activa);
+
+    if (cierrePendiente && bloqueoActivo && !exentoDeBloqueo && !enProrroga) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), true, cfgCierreEfectiva);
       return;
     }
 
-    if (cierrePendiente && reporteHabilitado) {
+    // Ya cerrado pero con intentos de regeneración disponibles (o ya agotados):
+    // se vuelve a mostrar la pantalla, en modo aviso, para que el secretario
+    // pueda volver a descargar su informe sin tener que llamar a soporte cada vez.
+    const puedeReabrirPorIntentos = prevCerrado && !exentoDeBloqueo && intentosRestantesReporte !== MAX_INTENTOS_REPORTE;
+
+    if (cierrePendiente && (reporteHabilitado || enProrroga)) {
+      mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), false, cfgCierreEfectiva);
+    } else if (puedeReabrirPorIntentos) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), false, cfgCierreEfectiva);
     } else {
       ocultarPantallaCierreMes();
@@ -1352,10 +1359,6 @@ function compararPorCodigo(codigoA, codigoB) {
   if (isNaN(b)) return -1;
   return a - b;
 }
-function ordenarAgentesPorCodigo(agentes) {
-  return [...(agentes || [])].sort((x, y) => compararPorCodigo(x.codigo, y.codigo));
-}
-
 /* ═════════════════════════════════════════
    Ordenar agentes por GRADO (jerarquía) y,
    dentro de cada grado, por código ascendente
@@ -1778,6 +1781,8 @@ function filtrarTablaPorCodigo() {
 }
 
 let solicitudDesbloqueoDiasActual = null; // array de días a solicitar
+let solicitudDiasCierreActivo = null; // { area, periodo, dias } cuando el modal pide días pendientes del mes anterior
+let solicitudProrrogaMesActivo = null; // { area, periodo } cuando el modal está en modo "prórroga de mes completo"
 
 async function solicitarDesbloqueo(dia) {
   try {
@@ -1845,11 +1850,69 @@ async function solicitarDesbloqueoTodos() {
 function cerrarModalSolicitudDesbloqueo() {
   $('modal-solicitar-desbloqueo').style.display = 'none';
   solicitudDesbloqueoDiasActual = null;
+  solicitudProrrogaMesActivo = null;
+  solicitudDiasCierreActivo = null;
 }
 
 async function confirmarSolicitudDesbloqueo() {
   const razon = $('solicitud-desbloqueo-razon').value.trim();
   if (!razon) { toast('Contale al administrador el motivo', 'err'); return; }
+
+  // Modo "prórroga de mes completo", activado desde solicitarProrrogaMesCompleto()
+  if (solicitudProrrogaMesActivo) {
+    const { area, periodo } = solicitudProrrogaMesActivo;
+    try {
+      await window._fb.addDoc(window._fb.collection(db, 'solicitudes'), {
+        area,
+        correoUsuario: usuario.email,
+        mes: periodo,
+        tipo: 'prorroga_mes_completo',
+        razon: razon,
+        estado: 'pendiente',
+        fechaSolicitud: new Date(),
+        fechaRespuesta: null,
+        respuestaAdmin: null
+      });
+      toast('✅ Solicitud de prórroga enviada. El administrador la va a revisar.', 'ok');
+      cerrarModalSolicitudDesbloqueo();
+    } catch(e) {
+      console.error(e);
+      toast('❌ Error enviando solicitud: ' + e.message, 'err');
+    }
+    return;
+  }
+
+  // Modo "días pendientes del mes anterior", activado desde la pantalla de cierre
+  if (solicitudDiasCierreActivo) {
+    const { area, periodo, dias } = solicitudDiasCierreActivo;
+    try {
+      const datos = {
+        area,
+        correoUsuario: usuario.email,
+        mes: periodo,
+        razon: razon,
+        estado: 'pendiente',
+        fechaSolicitud: new Date(),
+        fechaRespuesta: null,
+        respuestaAdmin: null
+      };
+      if (dias.length === 1) {
+        datos.tipo = 'desbloqueo_dia';
+        datos.dia = dias[0];
+      } else {
+        datos.tipo = 'desbloqueo_multiples_dias';
+        datos.dias = dias;
+      }
+      await window._fb.addDoc(window._fb.collection(db, 'solicitudes'), datos);
+      toast(`✅ Solicitud enviada para ${dias.length} ${dias.length === 1 ? 'día' : 'días'}. El administrador la va a revisar.`, 'ok');
+      cerrarModalSolicitudDesbloqueo();
+    } catch(e) {
+      console.error(e);
+      toast('❌ Error enviando solicitud: ' + e.message, 'err');
+    }
+    return;
+  }
+
   const dias = solicitudDesbloqueoDiasActual;
   if (!dias || !dias.length) return;
 
@@ -1885,6 +1948,92 @@ async function confirmarSolicitudDesbloqueo() {
   } catch(e) {
     console.error(e);
     toast('❌ Error enviando solicitud: ' + e.message, 'err');
+  }
+}
+
+// Permite que el área, desde la pantalla de cierre de mes, pida directamente
+// al administrador la prórroga del MES COMPLETO (en vez de un día suelto),
+// sin tener que avisarle por fuera del sistema. Reutiliza el mismo modal de
+// "solicitar desbloqueo", en un modo distinto.
+async function solicitarProrrogaMesCompleto() {
+  if (!cierreMesData) return;
+  const { area, periodo } = cierreMesData;
+
+  try {
+    const solRef = window._fb.collection(db, 'solicitudes');
+    const q = window._fb.query(
+      solRef,
+      window._fb.where('correoUsuario', '==', usuario.email),
+      window._fb.where('area', '==', area),
+      window._fb.where('mes', '==', periodo),
+      window._fb.where('tipo', '==', 'prorroga_mes_completo'),
+      window._fb.where('estado', '==', 'pendiente')
+    );
+    const existentes = await window._fb.getDocs(q);
+    if (!existentes.empty) {
+      toast('Ya tiene una solicitud de prórroga pendiente para este mes. Espere la respuesta del administrador.', 'ok');
+      return;
+    }
+
+    solicitudDesbloqueoDiasActual = null;
+    solicitudDiasCierreActivo = null;
+    solicitudProrrogaMesActivo = { area, periodo };
+    $('solicitud-desbloqueo-sub').textContent = `Mes completo (${periodo}) — ${area}`;
+    $('solicitud-desbloqueo-razon').value = '';
+    $('modal-solicitar-desbloqueo').style.display = 'flex';
+    $('solicitud-desbloqueo-razon').focus();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
+}
+
+// Desde la pantalla de cierre: pide de una sola vez el desbloqueo de todos los
+// días vacíos del mes anterior que siguen cerrados (en vez de ir día por día).
+async function solicitarDesbloqueoDiasPendientesCierre() {
+  if (!cierreMesData) return;
+  const { area, periodo } = cierreMesData;
+  const dias = (cierreMesData.diasPendientesCerrados || []).slice().sort((a, b) => a - b);
+  if (!dias.length) return;
+
+  try {
+    const q = window._fb.query(
+      window._fb.collection(db, 'solicitudes'),
+      window._fb.where('correoUsuario', '==', usuario.email),
+      window._fb.where('area', '==', area),
+      window._fb.where('mes', '==', periodo),
+      window._fb.where('estado', '==', 'pendiente')
+    );
+    const existentes = await window._fb.getDocs(q);
+    const yaPedidos = new Set();
+    existentes.forEach(d => {
+      const sol = d.data();
+      if (sol.tipo === 'prorroga_mes_completo') {
+        for (let i = 1; i <= diasEnMes(periodo); i++) yaPedidos.add(i);
+      } else if (Array.isArray(sol.dias)) {
+        sol.dias.forEach(x => yaPedidos.add(x));
+      } else if (sol.dia) {
+        yaPedidos.add(sol.dia);
+      }
+    });
+    const faltantes = dias.filter(d => !yaPedidos.has(d));
+    if (!faltantes.length) {
+      toast('Ya tiene una solicitud pendiente para esos días. Espere la respuesta del administrador.', 'ok');
+      return;
+    }
+
+    solicitudDesbloqueoDiasActual = null;
+    solicitudProrrogaMesActivo = null;
+    solicitudDiasCierreActivo = { area, periodo, dias: faltantes };
+    $('solicitud-desbloqueo-sub').textContent = `Días ${faltantes.join(', ')} de ${periodo} — ${area}`;
+    $('solicitud-desbloqueo-razon').value = '';
+    $('modal-solicitar-desbloqueo').style.display = 'flex';
+    $('solicitud-desbloqueo-razon').focus();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
   }
 }
 
@@ -2293,6 +2442,7 @@ async function guardarNovedad() {
       cerrarModalNovedad();
       modalEsEdicionDeCierre = false;
       renderizarTablaSoloLectura($('tabla-cierre-mes'), data, periodo);
+      actualizarEstadoPendientesCierre();
       return;
     }
 
@@ -2428,7 +2578,12 @@ function diasEnMes(periodo) {
 let cierreMesData = null; // { area, periodo, data }
 
 function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
-  cierreMesData = { area, periodo, data, bloqueante };
+  const MAX_INTENTOS_REPORTE = 3;
+  const yaCerrado = data && data.estado === 'cerrado';
+  const intentosUsados = yaCerrado ? (data.intentosReporte || 1) : 0;
+  const intentosRestantes = MAX_INTENTOS_REPORTE - intentosUsados;
+  cierreMesData = { area, periodo, data, bloqueante, yaCerrado, intentosUsados, intentosRestantes };
+  const enProrroga = !!(data && data.prorroga && data.prorroga.activa);
 
   const cont = $('cierre-mes-container');
   hide('tabla-cargando');
@@ -2454,11 +2609,23 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
 
   // Título y texto explicativo según el modo
   const tituloEl = $('cierre-mes-titulo-icono');
-  if (tituloEl) tituloEl.textContent = bloqueante ? '🔒 Cierre de mes' : '📄 Informe pendiente';
+  if (tituloEl) {
+    tituloEl.textContent = yaCerrado
+      ? (intentosRestantes > 0 ? '📄 Reporte ya generado' : '🚫 Límite de generación alcanzado')
+      : (enProrroga ? '📝 Prórroga de cierre habilitada' : (bloqueante ? '🔒 Cierre de mes' : '📄 Informe pendiente'));
+  }
 
   const textoEl = $('cierre-mes-texto');
   if (textoEl) {
-    if (bloqueante) {
+    if (yaCerrado) {
+      if (intentosRestantes > 0) {
+        textoEl.textContent = `El informe de ${obtenerNombreMes(periodo.split('-')[1])} ${periodo.split('-')[0]} ya fue generado. Si necesita volver a descargarlo, dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'} de generación. Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.`;
+      } else {
+        textoEl.textContent = 'Ha alcanzado el máximo de intentos permitidos para generar este informe. Por favor, comuníquese con soporte técnico para continuar.';
+      }
+    } else if (enProrroga) {
+      textoEl.textContent = 'El administrador habilitó una prórroga para completar el mes anterior. Edite los días pendientes (celdas en verde: clic para editar), luego indique "Elaborado por" y "Responsable" y genere el informe completo. Mientras tanto puede seguir registrando el mes en curso con normalidad, más abajo.';
+    } else if (bloqueante) {
       textoEl.textContent = 'El mes anterior ya no se puede modificar. Debe generar el informe para continuar registrando el mes en curso.';
     } else {
       const diaBloqueo = cfg ? cfg.diaBloqueo : null;
@@ -2478,9 +2645,12 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
   // el cierre es obligatorio; en modo aviso queda colapsada para no estorbar.
   const wrapTabla = $('cierre-mes-tabla-wrap');
   const btnVer    = $('btn-ver-detalle-cierre');
-  if (wrapTabla) wrapTabla.style.display = bloqueante ? 'block' : 'none';
+  // Si hay días sin completar, la tabla se despliega sola para poder llenarlos
+  const hayPendientesCierre = !yaCerrado && !(esAdmin() || esSupervisor()) && diasSinCompletarEnMes(data, periodo).length > 0;
+  const verTabla = bloqueante || enProrroga || hayPendientesCierre;
+  if (wrapTabla) wrapTabla.style.display = verTabla ? 'block' : 'none';
   if (btnVer) {
-    btnVer.style.display = bloqueante ? 'none' : 'inline-flex';
+    btnVer.style.display = verTabla ? 'none' : 'inline-flex';
     btnVer.textContent = '👁️ Ver detalle del mes anterior';
   }
 
@@ -2492,6 +2662,65 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
   $('cierre-elaborado-por').value = data.elaboradoPor || '';
   $('cierre-responsable').value = data.responsable || '';
   cargarListaPersonalParaCierre();
+
+  // Estado del botón principal y del aviso de intentos cuando el informe
+  // de este mes ya fue generado (regeneración, no un cierre nuevo).
+  const avisoIntentos = $('cierre-mes-intentos-aviso');
+  const descForm       = $('cierre-mes-form-admin-desc');
+  const btnPrincipal    = $('cierre-mes-btn-principal');
+  const btnPrincipalTxt = $('cierre-mes-btn-principal-txt');
+
+  if (yaCerrado) {
+    if (descForm) descForm.style.display = 'none';
+    if (avisoIntentos) {
+      avisoIntentos.style.display = 'block';
+      if (intentosRestantes > 0) {
+        const num = intentosUsados + 1;
+        const esUltimo = intentosRestantes === 1;
+        avisoIntentos.style.background = esUltimo ? 'var(--red-soft, #fde2e2)' : 'var(--gold-soft, #fdf3d8)';
+        avisoIntentos.style.color      = esUltimo ? 'var(--red, #b42318)' : 'var(--gold-dark, #8a6512)';
+        avisoIntentos.textContent = esUltimo
+          ? 'Este es su último intento disponible para generar el reporte de este mes.'
+          : `Este es su intento ${num} de generación. Dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'}.`;
+      } else {
+        avisoIntentos.style.background = 'var(--red-soft, #fde2e2)';
+        avisoIntentos.style.color      = 'var(--red, #b42318)';
+        avisoIntentos.textContent = 'Ha alcanzado el máximo de intentos permitidos. Por favor, comuníquese con soporte técnico para continuar.';
+      }
+    }
+    if (btnPrincipalTxt) btnPrincipalTxt.textContent = 'Volver a generar reporte (Excel + PDF)';
+    if (btnPrincipal) {
+      const agotado = intentosRestantes <= 0;
+      btnPrincipal.disabled = agotado;
+      btnPrincipal.style.opacity = agotado ? '0.5' : '';
+      btnPrincipal.style.cursor = agotado ? 'not-allowed' : '';
+    }
+    // "Elaborado por" y "Responsable" quedan fijos al cierre original: una
+    // regeneración entrega el mismo informe, no abre un cierre nuevo.
+    $('cierre-elaborado-por').style.pointerEvents = 'none';
+    $('cierre-elaborado-por').style.opacity = '0.7';
+    $('cierre-responsable').style.pointerEvents = 'none';
+    $('cierre-responsable').style.opacity = '0.7';
+  } else {
+    if (descForm) descForm.style.display = 'block';
+    if (avisoIntentos) avisoIntentos.style.display = 'none';
+    if (btnPrincipalTxt) btnPrincipalTxt.textContent = 'Cerrar mes y exportar (Excel + PDF)';
+    if (btnPrincipal) { btnPrincipal.disabled = false; btnPrincipal.style.opacity = ''; btnPrincipal.style.cursor = ''; }
+    $('cierre-elaborado-por').style.pointerEvents = '';
+    $('cierre-elaborado-por').style.opacity = '';
+    $('cierre-responsable').style.pointerEvents = '';
+    $('cierre-responsable').style.opacity = '';
+  }
+
+  // El botón de "solicitar prórroga de mes completo" solo tiene sentido
+  // cuando ya hay algo cerrado o por cerrar sobre lo que corregir, y nunca
+  // mientras ya se está en una prórroga activa (sería pedir lo que ya tiene).
+  const btnSolicitarProrroga = $('cierre-mes-btn-solicitar-prorroga');
+  if (btnSolicitarProrroga) {
+    btnSolicitarProrroga.style.display = enProrroga ? 'none' : 'flex';
+  }
+
+  actualizarEstadoPendientesCierre();
 }
 
 // Muestra u oculta la tabla del mes anterior cuando el cierre está en modo aviso
@@ -2567,10 +2796,36 @@ function elegirPersona(nombre) {
   cerrarSelectorPersona();
 }
 
+/* Selector de ÁREA del panel "Generar Reporte" (solo admin / permiso reporte_elegir_mes).
+   Permite sacar el reporte de cualquier área sin cambiar de área arriba.
+   Sigue al área activa de la página mientras la persona no elija otra a mano. */
+let reporteAreaElegidaManual = false;
+let reporteAreaUltimaActiva = null;
+
+async function poblarAreaReportePrueba() {
+  const sel = $('reporte-prueba-area');
+  if (!sel) return;
+  // Si cambió el área activa de la página, vuelve a seguirla
+  if (reporteAreaUltimaActiva !== areaActual) {
+    reporteAreaElegidaManual = false;
+    reporteAreaUltimaActiva = areaActual;
+  }
+  if (sel.options.length === 0) {
+    const areas = await obtenerAreasNovedades();
+    sel.innerHTML = areas.map(a => `<option value="${a}">${a}</option>`).join('');
+  }
+  if (!reporteAreaElegidaManual && areaActual && [...sel.options].some(o => o.value === areaActual)) {
+    sel.value = areaActual;
+  }
+}
+
+function marcarAreaReporteManual() { reporteAreaElegidaManual = true; }
+
 function poblarSelectoresReportePrueba() {
   const selMes = $('reporte-prueba-mes');
   const selAnio = $('reporte-prueba-anio');
   if (!selMes || !selAnio) return;
+  poblarAreaReportePrueba();
 
   if (selMes.options.length === 0) {
     const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -2603,15 +2858,22 @@ async function generarReportePrueba() {
   const elaboradoPor = $('reporte-prueba-elaborado-por').value.trim();
   const responsable = $('reporte-prueba-responsable').value.trim();
 
+  // Con los selectores visibles (admin / reporte_elegir_mes) se usa el área elegida
+  // en el panel; en los demás casos, el área activa de la página.
+  const selectoresEl = $('reporte-prueba-selectores');
+  const selAreaEl    = $('reporte-prueba-area');
+  const usaSelectorArea = selectoresEl && selectoresEl.style.display !== 'none' && selAreaEl && selAreaEl.value;
+  const areaReporte = usaSelectorArea ? selAreaEl.value : areaActual;
+
   if (!mes || !anio) { toast('Elegí mes y año', 'err'); return; }
   if (!elaboradoPor || !responsable) { toast('Elegí "Elaborado por" y "Responsable"', 'err'); return; }
-  if (!areaActual) { toast('Elegí un área arriba primero', 'err'); return; }
+  if (!areaReporte) { toast('Elegí un área primero', 'err'); return; }
 
   const periodo = `${anio}-${mes}`;
 
   try {
     toast('⏳ Generando reporte de prueba...', 'ok');
-    const ref = window._fb.doc(db, 'novedades', areaActual, periodo, 'datos');
+    const ref = window._fb.doc(db, 'novedades', areaReporte, periodo, 'datos');
     const snap = await window._fb.getDoc(ref);
 
     // Un área sin nada cargado también debe poder generar su reporte: sale con
@@ -2620,12 +2882,12 @@ async function generarReportePrueba() {
     const data = snap.exists() ? snap.data() : {};
     if (!data.agentes) data.agentes = [];
     if (data.agentes.length === 0) {
-      toast(`⚠️ ${areaActual} no tiene novedades cargadas en ${periodo} — se generará el reporte en blanco`, 'ok');
+      toast(`⚠️ ${areaReporte} no tiene novedades cargadas en ${periodo} — se generará el reporte en blanco`, 'ok');
     }
-    await exportarNovedadesExcel(data, areaActual, periodo, elaboradoPor, responsable);
-    await exportarNovedadesPDF(data, areaActual, periodo, elaboradoPor, responsable);
+    await exportarNovedadesExcel(data, areaReporte, periodo, elaboradoPor, responsable);
+    await exportarNovedadesPDF(data, areaReporte, periodo, elaboradoPor, responsable);
 
-    toast('✅ Reporte de prueba generado (no se modificó el estado del mes)', 'ok');
+    toast(`✅ Reporte de ${areaReporte} (${periodo}) generado — no se modificó el estado del mes`, 'ok');
   } catch(e) {
     console.error(e);
     toast('❌ Error: ' + e.message, 'err');
@@ -2980,9 +3242,84 @@ async function restaurarConfigCierrePorDefecto() {
   toast('Valores restaurados en pantalla — pulse "Guardar configuración" para aplicarlos', 'ok');
 }
 
+// Días del mes anterior que el área puede editar sin pedir nada al administrador:
+// los que él desbloqueó, más el ÚLTIMO día del mes, pero solo durante el día 1 del
+// mes siguiente (nadie puede saber de antemano qué ocurrió ese día) y mientras
+// el informe todavía no esté generado.
+function diasAbiertosEnCierre(data, periodo) {
+  const abiertos = new Set((data && data.diasDesbloqueados) || []);
+  const hoy = obtenerFechaParts();
+  const esMesAnterior = obtenerPeriodoSiguiente(periodo) === hoy.periodo;
+  if (data && esMesAnterior && hoy.dia === 1 && data.estado !== 'cerrado') {
+    abiertos.add(diasEnMes(periodo));
+  }
+  return abiertos;
+}
+
+// Días del mes en los que TODOS los agentes aún no tienen novedad registrada.
+// Es el mismo criterio que usa el sistema para marcar un día como completado.
+function diasSinCompletarEnMes(data, periodo) {
+  const agentes = (data && data.agentes) || [];
+  const total = diasEnMes(periodo);
+  const pendientes = [];
+  for (let d = 1; d <= total; d++) {
+    const completo = agentes.length > 0 &&
+      agentes.every(a => a.novedadesPorDia && a.novedadesPorDia[String(d)]);
+    if (!completo) pendientes.push(d);
+  }
+  return pendientes;
+}
+
+// Muestra los días pendientes del mes anterior, habilita o deshabilita el botón
+// de generar y ofrece pedir el desbloqueo de los días que están cerrados.
+// El informe no se puede generar con días vacíos (el administrador y el
+// supervisor quedan exentos, igual que en el resto del cierre).
+function actualizarEstadoPendientesCierre() {
+  if (!cierreMesData) return;
+  const { data, periodo, yaCerrado } = cierreMesData;
+  const exento = esAdmin() || esSupervisor();
+  const avisoPend    = $('cierre-mes-pendientes-aviso');
+  const btnSolDias   = $('cierre-mes-btn-solicitar-dias');
+  const btnPrincipal = $('cierre-mes-btn-principal');
+
+  const pendientes   = (yaCerrado || exento) ? [] : diasSinCompletarEnMes(data, periodo);
+  const abiertos     = diasAbiertosEnCierre(data, periodo);
+  const editables    = pendientes.filter(d => abiertos.has(d));
+  const pendCerrados = pendientes.filter(d => !abiertos.has(d));
+  cierreMesData.diasPendientes = pendientes;
+  cierreMesData.diasPendientesCerrados = pendCerrados;
+
+  if (avisoPend) {
+    if (pendientes.length) {
+      let msg = `Faltan días por completar: ${pendientes.join(', ')}. El informe se podrá generar cuando no quede ningún día vacío.`;
+      if (editables.length)   msg += ` Puede completar ahora los días ${editables.join(', ')} (celdas en verde, clic para editar).`;
+      if (pendCerrados.length) msg += ` Para los días ${pendCerrados.join(', ')} debe solicitar el desbloqueo al administrador.`;
+      avisoPend.textContent = msg;
+      avisoPend.style.display = 'block';
+    } else {
+      avisoPend.style.display = 'none';
+    }
+  }
+  if (btnSolDias) {
+    if (pendCerrados.length) {
+      btnSolDias.style.display = 'flex';
+      const txt = $('cierre-mes-btn-solicitar-dias-txt');
+      if (txt) txt.textContent = `Solicitar desbloqueo de los días pendientes (${pendCerrados.length})`;
+    } else {
+      btnSolDias.style.display = 'none';
+    }
+  }
+  if (btnPrincipal && !yaCerrado) {
+    const bloquear = pendientes.length > 0;
+    btnPrincipal.disabled = bloquear;
+    btnPrincipal.style.opacity = bloquear ? '0.5' : '';
+    btnPrincipal.style.cursor  = bloquear ? 'not-allowed' : '';
+  }
+}
+
 function renderizarTablaSoloLectura(tabla, data, periodo) {
   const totalDias = diasEnMes(periodo);
-  const diasDesbloqueados = data.diasDesbloqueados || [];
+  const diasDesbloqueados = Array.from(diasAbiertosEnCierre(data, periodo));
   let html = '<thead><tr><th>Código</th><th>Grado</th><th>Apellidos y Nombres</th>';
   for (let d = 1; d <= 31; d++) {
     const desbloqueado = diasDesbloqueados.includes(d);
@@ -3002,7 +3339,7 @@ function renderizarTablaSoloLectura(tabla, data, periodo) {
       if (d > totalDias) {
         html += `<td style="font-size:11px;opacity:.25"></td>`;
       } else if (desbloqueado) {
-        html += `<td style="font-size:11px;cursor:pointer;background:var(--green-l);border:2px solid var(--green);" onclick="abrirModalEditarNovedadCierre(${idx},${d})" title="Día desbloqueado por el admin — clic para editar">${valor || '— (clic para editar)'}</td>`;
+        html += `<td style="font-size:11px;cursor:pointer;background:var(--green-l);border:2px solid var(--green);" onclick="abrirModalEditarNovedadCierre(${idx},${d})" title="${(data.diasDesbloqueados || []).includes(d) ? 'Día desbloqueado por el admin — clic para editar' : 'Último día del mes anterior: abierto solo hoy — clic para editar'}">${valor || '— (clic para editar)'}</td>`;
       } else {
         html += `<td style="font-size:11px;">${valor || '—'}</td>`;
       }
@@ -3031,7 +3368,7 @@ async function abrirModalEditarNovedadCierre(idx, dia) {
 
   poblarSelectCodigos(codigo);
 
-  sub.textContent = `Día ${dia} (desbloqueado) — ${agente.apellidosNombres}`;
+  sub.textContent = `Día ${dia} (${((cierreMesData.data.diasDesbloqueados || []).includes(dia)) ? 'desbloqueado' : 'último día del mes anterior'}) — ${agente.apellidosNombres}`;
   codigo.value = (agente.novedadesPorDia && agente.novedadesPorDia[String(dia)]) || '';
   obs.value = agente.observaciones || (codigo.value ? (CODIGOS_DESC[codigo.value] || '') : '');
 
@@ -3042,6 +3379,40 @@ async function abrirModalEditarNovedadCierre(idx, dia) {
 
 async function cerrarYExportarMes() {
   if (!cierreMesData) return;
+  const { area, periodo, data, yaCerrado, intentosUsados, intentosRestantes } = cierreMesData;
+
+  // Caso 1: el mes ya estaba cerrado — esto es una REGENERACIÓN del mismo
+  // informe, no un cierre nuevo. No se tocan "elaboradoPor"/"responsable"
+  // ni la fecha de cierre; solo se reexportan los archivos y sube el contador.
+  if (yaCerrado) {
+    const MAX_INTENTOS_REPORTE = 3;
+    if (intentosRestantes <= 0) {
+      toast('❌ Ha alcanzado el máximo de intentos permitidos. Comuníquese con soporte técnico.', 'err');
+      return;
+    }
+    try {
+      toast('⏳ Generando reporte...', 'ok');
+      const nuevoConteo = intentosUsados + 1;
+      const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
+      await window._fb.updateDoc(novedadesRef, { intentosReporte: nuevoConteo });
+
+      await registrarEnAuditoria('regenerar_reporte', area, usuario.email, null, periodo,
+        { intento: nuevoConteo, de: MAX_INTENTOS_REPORTE },
+        `Reporte de ${periodo} regenerado por ${usuario.email} (intento ${nuevoConteo} de ${MAX_INTENTOS_REPORTE})`);
+
+      await exportarNovedadesExcel(data, area, periodo, data.elaboradoPor || '', data.responsable || '');
+      await exportarNovedadesPDF(data, area, periodo, data.elaboradoPor || '', data.responsable || '');
+
+      toast('✅ Reporte regenerado', 'ok');
+      cargarNovedadesActuales();
+    } catch(e) {
+      console.error(e);
+      toast('❌ Error: ' + e.message, 'err');
+    }
+    return;
+  }
+
+  // Caso 2: cierre nuevo, como hasta ahora.
   const elaboradoPor = $('cierre-elaborado-por').value.trim();
   const responsable = $('cierre-responsable').value.trim();
 
@@ -3050,17 +3421,40 @@ async function cerrarYExportarMes() {
     return;
   }
 
+  // El informe no se genera con días vacíos (administrador y supervisor exentos)
+  if (!(esAdmin() || esSupervisor())) {
+    const pendientes = diasSinCompletarEnMes(data, periodo);
+    if (pendientes.length) {
+      toast(`❌ No se puede generar el informe: faltan los días ${pendientes.join(', ')}.`, 'err');
+      actualizarEstadoPendientesCierre();
+      return;
+    }
+  }
+
   try {
     toast('⏳ Generando reporte...', 'ok');
-    const { area, periodo, data } = cierreMesData;
 
     const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
-    await window._fb.updateDoc(novedadesRef, {
+    const actualizacionCierre = {
       estado: 'cerrado',
       elaboradoPor,
       responsable,
-      fechaCierre: new Date()
-    });
+      fechaCierre: new Date(),
+      intentosReporte: 1
+    };
+    // Si el área estaba en prórroga, al generar su informe la prórroga termina
+    // sola y los días vuelven a bloquearse.
+    const terminaProrroga = !!(data.prorroga && data.prorroga.activa);
+    if (terminaProrroga) {
+      actualizacionCierre.diasDesbloqueados = [];
+      actualizacionCierre['prorroga.activa'] = false;
+      actualizacionCierre['prorroga.finalizadaEn'] = new Date();
+    }
+    await window._fb.updateDoc(novedadesRef, actualizacionCierre);
+    if (terminaProrroga) {
+      data.diasDesbloqueados = [];
+      data.prorroga.activa = false;
+    }
 
     await registrarEnAuditoria('cerrar_mes', area, usuario.email, null, periodo, { elaboradoPor, responsable }, `Mes ${periodo} cerrado por ${usuario.email}`);
 
@@ -3968,18 +4362,45 @@ function obtenerTokenDrive(forzarNuevo=false) {
       document.head.appendChild(s);
     });
     cargarGIS().then(() => {
-      const client = google.accounts.oauth2.initTokenClient({
-        client_id: GDRIVE_CONFIG.clientId,
-        scope: GDRIVE_CONFIG.scope,
-        callback: (resp) => {
-          if (resp.error) { reject(new Error('Error de autorización: ' + resp.error)); return; }
-          _driveTokenCache  = resp.access_token;
-          _driveTokenExpiry = Date.now() + 45 * 60 * 1000;
-          toast('✓ Conectado a Google Drive');
-          resolve(resp.access_token);
+      let resuelto = false;
+
+      // Si Google no responde en 20 segundos (ventana bloqueada, cerrada
+      // sin elegir cuenta, o sin conexión), avisamos en vez de quedarnos
+      // esperando en silencio.
+      const timeoutId = setTimeout(() => {
+        if (resuelto) return;
+        resuelto = true;
+        toast('✗ No se pudo conectar con Google Drive. Intente de nuevo.', 'err');
+        reject(new Error('Tiempo de espera agotado al conectar con Google Drive'));
+      }, 20000);
+
+      let client;
+      try {
+        client = google.accounts.oauth2.initTokenClient({
+          client_id: GDRIVE_CONFIG.clientId,
+          scope: GDRIVE_CONFIG.scope,
+          callback: (resp) => {
+            if (resuelto) return;
+            resuelto = true;
+            clearTimeout(timeoutId);
+            if (resp.error) { reject(new Error('Error de autorización: ' + resp.error)); return; }
+            _driveTokenCache  = resp.access_token;
+            _driveTokenExpiry = Date.now() + 45 * 60 * 1000;
+            toast('✓ Conectado a Google Drive');
+            resolve(resp.access_token);
+          }
+        });
+        client.requestAccessToken();
+      } catch (e) {
+        // requestAccessToken lanza error de forma síncrona si el navegador
+        // bloqueó la ventana emergente.
+        if (!resuelto) {
+          resuelto = true;
+          clearTimeout(timeoutId);
+          toast('✗ Habilite las ventanas emergentes para este sitio e intente de nuevo.', 'err');
+          reject(new Error('Ventana emergente de Google bloqueada por el navegador'));
         }
-      });
-      client.requestAccessToken();
+      }
     }).catch(e => reject(e));
   });
 }
@@ -4162,22 +4583,6 @@ async function obtenerOCrearCarpetaRaiz(token, nombre) {
   if (!cr.ok) { const e = await cr.json(); throw new Error(e.error?.message || cr.status); }
   const carpeta = await cr.json();
   return carpeta.id;
-}
-
-async function subirJSONaDrive(token, idCarpeta, nombreArchivo, objeto) {
-  const blob = new Blob([JSON.stringify(objeto, null, 2)], { type: 'application/json' });
-  const metadata = { name: nombreArchivo, mimeType: 'application/json', parents: [idCarpeta] };
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-  form.append('file', blob);
-
-  const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token },
-    body: form
-  });
-  if (!resp.ok) { const e = await resp.json(); throw new Error(e.error?.message || resp.status); }
-  return resp.json();
 }
 
 async function subirBlobADrive(token, idCarpeta, nombreArchivo, blob, mimeType) {
@@ -9051,6 +9456,8 @@ async function confirmarUnificarAreas() {
 ═════════════════════════════════════════ */
 
 async function poblarSelectoresDesbloqueoDirecto() {
+  poblarSelectoresProrroga();
+  poblarSelectoresReponerIntentos();
   const selArea = $('desbloqueo-directo-area');
   const selMes = $('desbloqueo-directo-mes');
   const selAnio = $('desbloqueo-directo-anio');
@@ -9162,16 +9569,22 @@ async function cargarDesbloqueos() {
       
       const badge = data.estado === 'pendiente' ? '🔄' : data.estado === 'aprobada' ? '✅' : '❌';
       
+      const esProrrogaMesCompleto = data.tipo === 'prorroga_mes_completo';
+      const etiquetaTipo = data.tipo === 'desbloqueo_dia' ? 'Día ' + data.dia
+        : data.tipo === 'desbloqueo_multiples_dias' ? 'Días ' + (data.dias || []).join(', ')
+        : esProrrogaMesCompleto ? '📝 Prórroga de mes completo'
+        : 'Mes ' + data.mes;
+
       div.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
             <div style="font-weight:600;">${badge} ${data.correoUsuario}</div>
-            <div style="font-size:11px;color:var(--txt2);">${data.area} — ${data.tipo === 'desbloqueo_dia' ? 'Día ' + data.dia : (data.tipo === 'desbloqueo_multiples_dias' ? 'Días ' + (data.dias || []).join(', ') : 'Mes ' + data.mes)}</div>
+            <div style="font-size:11px;color:var(--txt2);">${data.area} — ${etiquetaTipo}${data.mes ? ' · ' + data.mes : ''}</div>
             ${data.razon ? `<div style="font-size:11px;color:var(--txt3);margin-top:2px;">"${data.razon}"</div>` : ''}
           </div>
           ${data.estado === 'pendiente' && tienePermisoAccion('desbloqueos_aprobar') ? `
             <div style="display:flex;gap:6px;">
-              <button class="btn-acc btn-acc-green" onclick="aprobarDesbloqueo('${doc.id}')">Aprobar</button>
+              <button class="btn-acc btn-acc-green" onclick="${esProrrogaMesCompleto ? `aprobarProrrogaMesCompleto('${doc.id}')` : `aprobarDesbloqueo('${doc.id}')`}">Aprobar</button>
               <button class="btn-acc btn-acc-red" onclick="rechazarDesbloqueo('${doc.id}')">Rechazar</button>
             </div>
           ` : ''}
@@ -9186,6 +9599,284 @@ async function cargarDesbloqueos() {
     
   } catch(e) {
     console.error('Error:', e);
+  }
+}
+
+/* ═════════════════════════════════════════
+   PRÓRROGA DE CIERRE (solo administrador)
+   Habilita a un área —o a todas las que tienen el informe pendiente— a completar
+   todos los días de un mes y generar su informe completo, sin que el cierre las
+   bloquee. Termina sola cuando el área genera su informe, o con "Retirar".
+═════════════════════════════════════════ */
+
+async function poblarSelectoresReponerIntentos() {
+  const selArea = $('reponer-intentos-area');
+  const selMes  = $('reponer-intentos-mes');
+  const selAnio = $('reponer-intentos-anio');
+  if (!selArea || !selMes || !selAnio) return;
+
+  if (selArea.options.length === 0) {
+    const areas = await obtenerAreasNovedades();
+    selArea.innerHTML = areas.map(a => `<option value="${a}">${a}</option>`).join('');
+  }
+  if (selMes.options.length === 0) {
+    ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+      .forEach((m, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i + 1).padStart(2, '0');
+        opt.textContent = m;
+        selMes.appendChild(opt);
+      });
+  }
+  if (selAnio.options.length === 0) {
+    const anioActual = new Date().getFullYear();
+    for (let a = anioActual - 1; a <= anioActual + 1; a++) {
+      const opt = document.createElement('option');
+      opt.value = String(a);
+      opt.textContent = String(a);
+      selAnio.appendChild(opt);
+    }
+  }
+  // Por defecto: el mes recién culminado, igual que en la prórroga. Solo la
+  // primera vez, para no pisar lo que el administrador ya haya elegido.
+  if (!selMes.dataset.listo) {
+    const ant = obtenerPeriodoAnterior(obtenerFechaParts().periodo);
+    selAnio.value = ant.split('-')[0];
+    selMes.value  = ant.split('-')[1];
+    selMes.dataset.listo = '1';
+  }
+}
+
+async function poblarSelectoresProrroga() {
+  const selArea = $('prorroga-area');
+  const selMes  = $('prorroga-mes');
+  const selAnio = $('prorroga-anio');
+  if (!selArea || !selMes || !selAnio) return;
+
+  if (selArea.options.length === 0) {
+    const areas = await obtenerAreasNovedades();
+    selArea.innerHTML = '<option value="__TODAS__">⏳ Todas las áreas que apliquen</option>' +
+      areas.map(a => `<option value="${a}">${a}</option>`).join('');
+  }
+  if (selMes.options.length === 0) {
+    ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+      .forEach((m, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i + 1).padStart(2, '0');
+        opt.textContent = m;
+        selMes.appendChild(opt);
+      });
+  }
+  if (selAnio.options.length === 0) {
+    const anioActual = new Date().getFullYear();
+    for (let a = anioActual - 1; a <= anioActual + 1; a++) {
+      const opt = document.createElement('option');
+      opt.value = String(a);
+      opt.textContent = String(a);
+      selAnio.appendChild(opt);
+    }
+  }
+  // Por defecto: el mes recién culminado (el que se cierra). Solo la primera vez,
+  // para no pisar lo que el administrador ya haya elegido.
+  if (!selMes.dataset.listo) {
+    const ant = obtenerPeriodoAnterior(obtenerFechaParts().periodo);
+    selAnio.value = ant.split('-')[0];
+    selMes.value  = ant.split('-')[1];
+    selMes.dataset.listo = '1';
+  }
+}
+
+// Lee de Firestore el documento del período para cada área indicada
+async function leerAreasParaProrroga(areas, periodo) {
+  return Promise.all(areas.map(async area => {
+    const ref  = window._fb.doc(db, 'novedades', area, periodo, 'datos');
+    const snap = await window._fb.getDoc(ref);
+    return { area, ref, snap };
+  }));
+}
+
+function resumenAreasProrroga(candidatas) {
+  const nombres = candidatas.map(c => c.area);
+  const visibles = nombres.slice(0, 12).map(n => '• ' + n).join('\n');
+  const extra = nombres.length > 12 ? `\n… y ${nombres.length - 12} más` : '';
+  return `${visibles}${extra}`;
+}
+
+async function habilitarProrrogaCierre() {
+  if (!esAdmin()) { toast('❌ Solo el administrador puede habilitar prórrogas', 'err'); return; }
+  const sel  = $('prorroga-area').value;
+  const mes  = $('prorroga-mes').value;
+  const anio = $('prorroga-anio').value;
+  if (!sel || !mes || !anio) { toast('Complete todos los campos', 'err'); return; }
+
+  const periodo = `${anio}-${mes}`;
+  const todas   = sel === '__TODAS__';
+
+  try {
+    toast('⏳ Revisando áreas...', 'ok');
+    const areas = todas ? await obtenerAreasNovedades() : [sel];
+    const lecturas = await leerAreasParaProrroga(areas, periodo);
+
+    const candidatas = lecturas.filter(({ snap }) => {
+      if (!snap.exists()) return false;
+      const d = snap.data();
+      if (!(d.agentes || []).length) return false;          // sin nómina cargada
+      if (d.prorroga && d.prorroga.activa) return false;    // ya tiene prórroga
+      return todas ? d.estado !== 'cerrado' : true;         // "todas" = solo las pendientes
+    });
+
+    if (!candidatas.length) {
+      toast(todas
+        ? `No hay áreas con informe pendiente en ${periodo} (o ya tienen prórroga activa)`
+        : `${sel} no tiene datos en ${periodo} o ya tiene una prórroga activa`, 'err');
+      return;
+    }
+
+    const reabre = !todas && candidatas[0].snap.data().estado === 'cerrado';
+    const mensaje = reabre
+      ? `${sel} ya generó su informe de ${periodo}. Con la prórroga se reabrirá el mes completo para que lo complete y genere el informe de nuevo.\n\n¿Habilitar la prórroga?`
+      : `Se habilitará la prórroga de ${periodo} (todos los días del mes) para ${candidatas.length} área(s):\n\n${resumenAreasProrroga(candidatas)}\n\n¿Continuar?`;
+    const ok = await confirmarAccion(mensaje, 'Habilitar prórroga de cierre');
+    if (!ok) return;
+
+    const totalDias = diasEnMes(periodo);
+    const todosLosDias = Array.from({ length: totalDias }, (_, i) => i + 1);
+
+    for (const { area, ref, snap } of candidatas) {
+      const d = snap.data();
+      const upd = {
+        diasDesbloqueados: todosLosDias,
+        prorroga: {
+          activa: true,
+          por: usuario.email,
+          fecha: new Date(),
+          periodo,
+          estadoPrevio: d.estado || null
+        }
+      };
+      if (d.estado === 'cerrado') upd.estado = 'prorroga';
+      await window._fb.updateDoc(ref, upd);
+      await registrarEnAuditoria(
+        'prorroga_cierre', area, usuario.email, null, periodo,
+        { dias: totalDias, reabierto: d.estado === 'cerrado' },
+        `Prórroga de cierre habilitada para ${area} — ${periodo} (mes completo), autorizada por ${usuario.email}`
+      );
+    }
+
+    toast(`✅ Prórroga habilitada en ${candidatas.length} área(s) para ${periodo}`, 'ok');
+    if (areaActual && candidatas.some(c => c.area === areaActual)) cargarNovedadesActuales();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
+}
+
+async function retirarProrrogaCierre() {
+  if (!esAdmin()) { toast('❌ Solo el administrador puede retirar prórrogas', 'err'); return; }
+  const sel  = $('prorroga-area').value;
+  const mes  = $('prorroga-mes').value;
+  const anio = $('prorroga-anio').value;
+  if (!sel || !mes || !anio) { toast('Complete todos los campos', 'err'); return; }
+
+  const periodo = `${anio}-${mes}`;
+  const todas   = sel === '__TODAS__';
+
+  try {
+    toast('⏳ Revisando áreas...', 'ok');
+    const areas = todas ? await obtenerAreasNovedades() : [sel];
+    const lecturas = await leerAreasParaProrroga(areas, periodo);
+    const candidatas = lecturas.filter(({ snap }) =>
+      snap.exists() && snap.data().prorroga && snap.data().prorroga.activa);
+
+    if (!candidatas.length) {
+      toast(todas ? `No hay prórrogas activas en ${periodo}` : `${sel} no tiene una prórroga activa en ${periodo}`, 'err');
+      return;
+    }
+
+    const ok = await confirmarAccion(
+      `Se retirará la prórroga de ${periodo} en ${candidatas.length} área(s) y los días volverán a bloquearse:\n\n${resumenAreasProrroga(candidatas)}\n\nLo que ya hayan guardado se conserva. ¿Continuar?`,
+      'Retirar prórroga de cierre'
+    );
+    if (!ok) return;
+
+    for (const { area, ref, snap } of candidatas) {
+      const d = snap.data();
+      const upd = {
+        diasDesbloqueados: [],
+        'prorroga.activa': false,
+        'prorroga.retiradaPor': usuario.email,
+        'prorroga.retiradaEn': new Date()
+      };
+      // Si el área ya había generado su informe antes de la prórroga, vuelve a quedar cerrada
+      if (d.prorroga.estadoPrevio === 'cerrado') upd.estado = 'cerrado';
+      await window._fb.updateDoc(ref, upd);
+      await registrarEnAuditoria(
+        'retirar_prorroga_cierre', area, usuario.email, null, periodo, {},
+        `Prórroga de cierre retirada para ${area} — ${periodo}, por ${usuario.email}`
+      );
+    }
+
+    toast(`✅ Prórroga retirada en ${candidatas.length} área(s)`, 'ok');
+    if (areaActual && candidatas.some(c => c.area === areaActual)) cargarNovedadesActuales();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
+}
+
+// Repone los 3 intentos de generación de reporte para un área/mes puntual.
+// Distinto de la prórroga de cierre: esto no reabre novedades para corregir,
+// solo resetea el contador de regeneraciones del informe ya generado.
+async function reponerIntentosReporte() {
+  if (!esAdmin()) { toast('❌ Solo el administrador puede reponer intentos', 'err'); return; }
+  const area = $('reponer-intentos-area').value;
+  const mes  = $('reponer-intentos-mes').value;
+  const anio = $('reponer-intentos-anio').value;
+  if (!area || !mes || !anio) { toast('Complete todos los campos', 'err'); return; }
+
+  const periodo = `${anio}-${mes}`;
+
+  try {
+    const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
+    const novedadesDoc = await window._fb.getDoc(novedadesRef);
+    if (!novedadesDoc.exists() || !(novedadesDoc.data().agentes || []).length) {
+      toast(`${area} no tiene datos en ${periodo}`, 'err');
+      return;
+    }
+    const d = novedadesDoc.data();
+    if (d.estado !== 'cerrado') {
+      toast(`${area} todavía no ha generado el informe de ${periodo}`, 'err');
+      return;
+    }
+    const intentosUsados = d.intentosReporte || 1;
+    if (intentosUsados < 3) {
+      const ok0 = await confirmarAccion(
+        `${area} todavía tiene intentos disponibles en ${periodo} (lleva ${intentosUsados} de 3). ¿Reponer de todas formas los 3 intentos completos?`,
+        'Reponer intentos de generación'
+      );
+      if (!ok0) return;
+    } else {
+      const ok = await confirmarAccion(
+        `Se repondrán los 3 intentos de generación de reporte para ${area} — ${periodo}. ¿Continuar?`,
+        'Reponer intentos de generación'
+      );
+      if (!ok) return;
+    }
+
+    await window._fb.updateDoc(novedadesRef, { intentosReporte: 0 });
+    await registrarEnAuditoria(
+      'reponer_intentos_reporte', area, usuario.email, null, periodo, {},
+      `Intentos de generación de reporte repuestos para ${area} — ${periodo}, por ${usuario.email}`
+    );
+
+    toast(`✅ Intentos repuestos para ${area} — ${periodo}`, 'ok');
+    if (areaActual === area) cargarNovedadesActuales();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
   }
 }
 
@@ -9233,6 +9924,64 @@ async function aprobarDesbloqueo(docId) {
     cargarDesbloqueos();
   } catch(e) {
     toast('Error: ' + e.message, 'err');
+  }
+}
+
+// Aprueba una solicitud de prórroga de mes completo enviada por un área desde
+// el sistema (en vez de avisar al administrador por WhatsApp). Hace lo mismo
+// que habilitarProrrogaCierre(), pero para el área/período fijos de la solicitud.
+async function aprobarProrrogaMesCompleto(docId) {
+  try {
+    const solRef = window._fb.doc(db, 'solicitudes', docId);
+    const solDoc = await window._fb.getDoc(solRef);
+    if (!solDoc.exists()) { toast('❌ Solicitud no encontrada', 'err'); return; }
+    const sol = solDoc.data();
+    const area = sol.area;
+    const periodo = sol.mes;
+
+    const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
+    const novedadesDoc = await window._fb.getDoc(novedadesRef);
+    if (!novedadesDoc.exists() || !(novedadesDoc.data().agentes || []).length) {
+      toast(`${area} no tiene datos en ${periodo}`, 'err');
+      return;
+    }
+    const d = novedadesDoc.data();
+    if (d.prorroga && d.prorroga.activa) {
+      toast(`${area} ya tiene una prórroga activa en ${periodo}`, 'err');
+      return;
+    }
+
+    const totalDias = diasEnMes(periodo);
+    const todosLosDias = Array.from({ length: totalDias }, (_, i) => i + 1);
+    const upd = {
+      diasDesbloqueados: todosLosDias,
+      prorroga: {
+        activa: true,
+        por: usuario.email,
+        fecha: new Date(),
+        periodo,
+        estadoPrevio: d.estado || null,
+        solicitudId: docId
+      }
+    };
+    if (d.estado === 'cerrado') upd.estado = 'prorroga';
+    await window._fb.updateDoc(novedadesRef, upd);
+
+    await window._fb.updateDoc(solRef, { estado: 'aprobada', fechaRespuesta: new Date() });
+
+    await registrarEnAuditoria(
+      'prorroga_cierre', area, sol.correoUsuario, null, periodo,
+      { dias: totalDias, reabierto: d.estado === 'cerrado', viaSolicitud: true },
+      `Prórroga de cierre (mes completo) aprobada para ${area} — ${periodo}, solicitada por ${sol.correoUsuario}, autorizada por ${usuario.email}`
+    );
+
+    toast(`✅ Prórroga de mes completo habilitada para ${area} — ${periodo}`, 'ok');
+    cargarDesbloqueos();
+    if (areaActual === area) cargarNovedadesActuales();
+
+  } catch(e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
   }
 }
 
@@ -9755,6 +10504,13 @@ window.cerrarSelectorPersona        = cerrarSelectorPersona;
 window.filtrarListaPersonal         = filtrarListaPersonal;
 window.elegirPersona                = elegirPersona;
 window.generarReportePrueba         = generarReportePrueba;
+window.marcarAreaReporteManual       = marcarAreaReporteManual;
+window.habilitarProrrogaCierre       = habilitarProrrogaCierre;
+window.retirarProrrogaCierre         = retirarProrrogaCierre;
+window.reponerIntentosReporte        = reponerIntentosReporte;
+window.solicitarProrrogaMesCompleto  = solicitarProrrogaMesCompleto;
+window.solicitarDesbloqueoDiasPendientesCierre = solicitarDesbloqueoDiasPendientesCierre;
+window.aprobarProrrogaMesCompleto    = aprobarProrrogaMesCompleto;
 window.exportarReporteActividadExcel = exportarReporteActividadExcel;
 window.cambiarPaginaPersonasEnvio   = cambiarPaginaPersonasEnvio;
 window.cambiarPaginaArchivosEnvio   = cambiarPaginaArchivosEnvio;

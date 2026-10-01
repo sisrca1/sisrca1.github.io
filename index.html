@@ -200,7 +200,11 @@
       <div id="admin-generar-reporte" class="panel-white" style="display:none;padding:20px;margin-bottom:20px;border:2px solid var(--blue-m);">
         <div class="sec-titulo" id="reporte-prueba-titulo">📄 Generar Reporte</div>
         <p style="font-size:12px;color:var(--txt2);margin-bottom:16px;display:none;" id="reporte-prueba-desc"></p>
-        <div id="reporte-prueba-selectores" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;margin-bottom:16px;">
+        <div id="reporte-prueba-selectores" style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end;margin-bottom:16px;">
+          <div class="form-field" style="margin-bottom:0;">
+            <label class="form-label">Área</label>
+            <select id="reporte-prueba-area" class="filtro-select" onchange="marcarAreaReporteManual()"></select>
+          </div>
           <div class="form-field" style="margin-bottom:0;">
             <label class="form-label">Mes</label>
             <select id="reporte-prueba-mes" class="filtro-select"></select>
@@ -243,9 +247,11 @@
         </div>
 
         <div id="cierre-mes-form-admin" style="display:none;">
-          <p style="font-size:12px;color:var(--txt2);margin-bottom:16px;">
+          <p id="cierre-mes-form-admin-desc" style="font-size:12px;color:var(--txt2);margin-bottom:16px;">
             Elegí de la lista de personal quién elaboró el reporte y quién es el responsable.
           </p>
+          <div id="cierre-mes-intentos-aviso" style="display:none;font-size:12px;font-weight:600;margin-bottom:16px;padding:8px 12px;border-radius:8px;"></div>
+          <div id="cierre-mes-pendientes-aviso" style="display:none;font-size:12px;font-weight:600;margin-bottom:16px;padding:8px 12px;border-radius:8px;background:var(--red-soft,#fde2e2);color:var(--red,#b42318);"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
             <div class="form-field" style="margin-bottom:0;">
               <label class="form-label">Elaborado por</label>
@@ -256,9 +262,17 @@
               <input type="text" id="cierre-responsable" class="filtro-input" readonly placeholder="Clic para elegir..." onclick="abrirSelectorPersona('cierre-responsable')" style="cursor:pointer;">
             </div>
           </div>
-          <button class="btn-acc btn-acc-blue" onclick="cerrarYExportarMes()">
+          <button id="cierre-mes-btn-principal" class="btn-acc btn-acc-blue" onclick="cerrarYExportarMes()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Cerrar mes y exportar (Excel + PDF)
+            <span id="cierre-mes-btn-principal-txt">Cerrar mes y exportar (Excel + PDF)</span>
+          </button>
+          <button id="cierre-mes-btn-solicitar-dias" class="btn-acc btn-acc-orange" onclick="solicitarDesbloqueoDiasPendientesCierre()" style="margin-top:8px;display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+            <span id="cierre-mes-btn-solicitar-dias-txt">Solicitar desbloqueo de los días pendientes</span>
+          </button>
+          <button id="cierre-mes-btn-solicitar-prorroga" class="btn-acc btn-acc-orange" onclick="solicitarProrrogaMesCompleto()" style="margin-top:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            ¿Falta algo por corregir? Solicitar prórroga de mes completo
           </button>
         </div>
       </div>
@@ -1059,6 +1073,55 @@
                 <select id="desbloqueo-directo-dia" class="filtro-select"></select>
               </div>
               <button class="btn-acc btn-acc-green" onclick="desbloquearDiaDirecto()" style="height:38px;" data-permiso="desbloqueos_directo">🔓 Desbloquear</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-white" style="border:2px solid var(--gold, #e8b84b);margin-bottom:16px;" data-permiso="__solo_admin__">
+          <div style="padding:20px;">
+            <div class="sec-titulo">⏳ Prórroga de cierre (habilitar el mes completo)</div>
+            <p style="color:var(--txt2);margin-bottom:16px;font-size:12px;">
+              Permite que un área —o todas las que tienen el informe pendiente— complete <strong>todos los días</strong> del mes indicado y genere su informe completo, sin quedar bloqueada por el cierre. Mientras dure la prórroga el área sigue registrando el mes en curso con normalidad. Cuando el área genera su informe, la prórroga termina sola y los días vuelven a bloquearse. Con <strong>Retirar</strong> puede cancelarla antes. Esta función es solo del administrador: el administrador nunca queda bloqueado por el cierre.
+            </p>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto auto;gap:10px;align-items:end;">
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Área</label>
+                <select id="prorroga-area" class="form-select"></select>
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Mes a completar</label>
+                <select id="prorroga-mes" class="filtro-select"></select>
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Año</label>
+                <select id="prorroga-anio" class="filtro-select"></select>
+              </div>
+              <button class="btn-acc btn-acc-green" onclick="habilitarProrrogaCierre()" style="height:38px;">⏳ Habilitar prórroga</button>
+              <button class="btn-acc btn-acc-blue" onclick="retirarProrrogaCierre()" style="height:38px;">↩ Retirar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-white" style="border:2px solid var(--gold, #e8b84b);margin-bottom:16px;" data-permiso="__solo_admin__">
+          <div style="padding:20px;">
+            <div class="sec-titulo">🔁 Reponer intentos de generación de reporte</div>
+            <p style="color:var(--txt2);margin-bottom:16px;font-size:12px;">
+              Cada área puede regenerar el informe de un mes ya cerrado hasta 3 veces en total. Use esto cuando un área agotó sus intentos y necesita generar su informe una vez más.
+            </p>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;">
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Área</label>
+                <select id="reponer-intentos-area" class="form-select"></select>
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Mes</label>
+                <select id="reponer-intentos-mes" class="filtro-select"></select>
+              </div>
+              <div class="form-field" style="margin-bottom:0;">
+                <label class="form-label">Año</label>
+                <select id="reponer-intentos-anio" class="filtro-select"></select>
+              </div>
+              <button class="btn-acc btn-acc-green" onclick="reponerIntentosReporte()" style="height:38px;">🔁 Reponer los 3 intentos</button>
             </div>
           </div>
         </div>
