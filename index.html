@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="img/favicon_32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="img/favicon_16.png">
 <link rel="apple-touch-icon" href="img/SISCTE_logo_icono_256.png">
-<link rel="stylesheet" href="styles.css?v=20260807b">
+<link rel="stylesheet" href="styles.css?v=20261001a">
 <link rel="stylesheet" href="styles_novedades_v6.css?v=20260807b">
 </head>
 <body>
@@ -1370,8 +1370,9 @@
             <input type="text" id="mantenimiento-mensaje" class="form-select" placeholder="Ej.: Volvemos en unos minutos, estamos aplicando una mejora al sistema." onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
           </div>
           <div class="form-field" style="max-width:520px;margin-top:12px;">
-            <label class="form-label">Correos de prueba que pueden entrar aunque esté activo (opcional)</label>
-            <input type="text" id="mantenimiento-correos-exentos" class="form-select" placeholder="correo1@gmail.com, correo2@gmail.com" onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
+            <label class="form-label">Activar desbloqueo de Mantenimiento al siguiente usuario</label>
+            <input type="text" id="mantenimiento-correos-exentos" class="form-select" placeholder="ejemplo1@gmail.com, ejemplo2@gmail.com" onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
+            <div style="margin-top:6px;font-size:11px;color:var(--txt2);line-height:1.5;">Escriba el correo del usuario (si son varios, sepárelos con coma). Esa persona podrá entrar y usar el sistema con normalidad mientras el mantenimiento esté activo; todos los demás verán la pantalla de mantenimiento. Si lo deja vacío, solo usted podrá entrar.</div>
           </div>
           <button class="btn-acc btn-acc-blue" style="margin-top:14px;" onclick="guardarModoMantenimiento()">💾 Guardar</button>
           <div id="mantenimiento-info" style="margin-top:12px;font-size:11px;color:var(--txt2);"></div>
@@ -2057,6 +2058,6 @@
   });
 </script>
 
-<script type="module" src="app.js?v=20260930"></script>
+<script type="module" src="app.js?v=20261001a"></script>
 </body>
 </html>
