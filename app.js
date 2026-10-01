@@ -3722,7 +3722,7 @@ document.addEventListener('DOMContentLoaded', async () => {
    SELECTORES DE ARCHIVO
 ══════════════════════════════════ */
 function abrirSelectorArchivo() {
-  const i=document.createElement('input'); i.type='file'; i.accept='.rar,.zip'; i.style.display='none';
+  const i=document.createElement('input'); i.type='file'; i.accept='.rar,.zip,.pdf'; i.style.display='none';
   i.addEventListener('change', () => { if(i.files[0]) seleccionar(i.files[0]); i.remove(); });
   document.body.appendChild(i); i.click();
 }
@@ -3767,7 +3767,7 @@ function quitarActa() {
 
 function seleccionar(f) {
   const ext = f.name.split('.').pop().toLowerCase();
-  if (!['rar','zip'].includes(ext)) { toast('Solo se aceptan archivos comprimidos (.rar o .zip)','err'); return; }
+  if (!['rar','zip','pdf'].includes(ext)) { toast('Solo se aceptan archivos .rar, .zip o .pdf','err'); return; }
   archivoSeleccionado = f;
   $('fp-nombre').textContent = f.name;
   $('fp-peso').textContent   = formatSize(f.size);
@@ -3933,7 +3933,7 @@ function actualizarBotonEnviar() {
   const hint = $('enviar-hint');
   if (hint) {
     if (!archivoSeleccionado)
-      hint.textContent = 'Suba el archivo comprimido (RAR o ZIP) para habilitar el envío';
+      hint.textContent = 'Suba el archivo (RAR, ZIP o PDF) para habilitar el envío';
     else if (!informeSeleccionado)
       hint.textContent = '⚠️ El Informe de Entrega PDF es obligatorio';
     else if (!actaSeleccionada && actaObligatoria)
@@ -4678,7 +4678,7 @@ async function subirComprobantePDFaDrive(dataUrl, registro) {
    ENVIAR ARCHIVO — FLUJO PRINCIPAL
 ══════════════════════════════════ */
 async function enviarArchivo() {
-  if (!archivoSeleccionado) { toast('Seleccione un archivo comprimido (RAR o ZIP) primero','err'); return; }
+  if (!archivoSeleccionado) { toast('Seleccione un archivo (RAR, ZIP o PDF) primero','err'); return; }
   if (!informeSeleccionado) { toast('El Informe de Entrega PDF es obligatorio','err'); return; }
 
   const actaObligatoria = actaEsObligatoriaHoy();
@@ -4710,7 +4710,7 @@ async function enviarArchivo() {
     const fechaTexto = ahora.toLocaleDateString('es-EC',{timeZone:'America/Guayaquil',day:'2-digit',month:'long',year:'numeric'});
     const horaTexto  = ahora.toLocaleTimeString('es-EC',{timeZone:'America/Guayaquil',hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
-    /* 1. Subir archivo comprimido (RAR/ZIP) */
+    /* 1. Subir archivo principal (RAR/ZIP/PDF) */
     setProgreso(10, 'Subiendo archivo a Google Drive...');
     const storageURL = await subirAGoogleDrive(archivoSeleccionado, nombreArchivoFinal,
       p => setProgreso(10 + Math.round(p*0.20), `Subiendo archivo... ${Math.round(p)}%`));
