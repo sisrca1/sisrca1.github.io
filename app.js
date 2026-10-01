@@ -1146,9 +1146,9 @@ async function cargarNovedadesActuales() {
     // Límite de regeneraciones del informe ya cerrado: el cierre original cuenta
     // como el intento 1, quedan 2 más para el secretario (ej. generó en el
     // celular, no encontró el archivo, y necesita repetirlo desde la PC).
-    const MAX_INTENTOS_REPORTE = 3;
-    const intentosUsadosReporte = prevCerrado ? (docAnterior.data().intentosReporte || 1) : 0;
-    const intentosRestantesReporte = MAX_INTENTOS_REPORTE - intentosUsadosReporte;
+    const datosPrevReporte = prevCerrado ? docAnterior.data() : null;
+    const intentosUsadosReporte = intentosUsadosDeReporte(datosPrevReporte);
+    const intentosRestantesReporte = intentosRestantesDeReporte(datosPrevReporte, periodoAnterior);
 
     // Panel "Generar Reporte" (arriba de la tabla):
     // - Admin: acceso total, cualquier área/mes/año, en cualquier momento.
@@ -1265,10 +1265,13 @@ async function cargarNovedadesActuales() {
       return;
     }
 
-    // Ya cerrado pero con intentos de regeneración disponibles (o ya agotados):
-    // se vuelve a mostrar la pantalla, en modo aviso, para que el secretario
-    // pueda volver a descargar su informe sin tener que llamar a soporte cada vez.
-    const puedeReabrirPorIntentos = prevCerrado && !exentoDeBloqueo && intentosRestantesReporte !== MAX_INTENTOS_REPORTE;
+    // Ya cerrado con intentos de regeneración disponibles: se vuelve a mostrar la
+    // pantalla, en modo aviso, para que el secretario pueda volver a descargar su
+    // informe. Si agotó los 3 intentos el mismo día 1, se muestra el aviso de límite
+    // hasta las 23:59; vencido el plazo, la pantalla desaparece.
+    const puedeReabrirPorIntentos = prevCerrado && !exentoDeBloqueo &&
+      (intentosRestantesReporte > 0 ||
+       (intentosUsadosReporte >= MAX_INTENTOS_REPORTE && plazoReporteVigente(datosPrevReporte, periodoAnterior)));
 
     if (cierrePendiente && (reporteHabilitado || enProrroga)) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), false, cfgCierreEfectiva);
@@ -2285,6 +2288,19 @@ async function guardarNovedad() {
     ? `Días ${diasAEditar[0]}-${diasAEditar[diasAEditar.length - 1]} (${diasAEditar.length} días)`
     : `Día ${diasAEditar[0]}`;
 
+  // Mes anterior: el plazo se vuelve a comprobar al guardar (por si se pasó la hora)
+  if (modalEsEdicionDeCierre && cierreMesData) {
+    const abiertosAhora = diasAbiertosEnCierre(cierreMesData.data, cierreMesData.periodo);
+    if (diasAEditar.some(d => !abiertosAhora.has(d))) {
+      toast('❌ El plazo para modificar el mes anterior ya terminó. Comuníquese con el administrador.', 'err');
+      cerrarModalNovedad();
+      modalEsEdicionDeCierre = false;
+      renderizarTablaSoloLectura($('tabla-cierre-mes'), cierreMesData.data, cierreMesData.periodo);
+      actualizarEstadoPendientesCierre();
+      return;
+    }
+  }
+
   // Actualizar en memoria
   if (!modalAgenteEdicion.novedadesPorDia) {
     modalAgenteEdicion.novedadesPorDia = {};
@@ -2453,14 +2469,17 @@ function diasEnMes(periodo) {
 ═════════════════════════════════════════ */
 
 let cierreMesData = null; // { area, periodo, data }
+let timerPlazoCierre = null; // cierra la edición del mes anterior a medianoche si la pestaña sigue abierta
 
 function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
-  const MAX_INTENTOS_REPORTE = 3;
   const yaCerrado = data && data.estado === 'cerrado';
-  const intentosUsados = yaCerrado ? (data.intentosReporte || 1) : 0;
-  const intentosRestantes = MAX_INTENTOS_REPORTE - intentosUsados;
+  const intentosUsados = intentosUsadosDeReporte(data);
+  const intentosRestantes = intentosRestantesDeReporte(data, periodo);
+  // Cerrado con intentos sin gastar, pero fuera de plazo: el contador quedó en cero
+  const plazoReporteVencido = yaCerrado && intentosRestantes === 0 && intentosUsados < MAX_INTENTOS_REPORTE;
   cierreMesData = { area, periodo, data, bloqueante, yaCerrado, intentosUsados, intentosRestantes };
   const enProrroga = !!(data && data.prorroga && data.prorroga.activa);
+  const plazoVigente = plazoLlenadoMesAnteriorVigente(periodo);
 
   const cont = $('cierre-mes-container');
   hide('tabla-cargando');
@@ -2488,7 +2507,7 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
   const tituloEl = $('cierre-mes-titulo-icono');
   if (tituloEl) {
     tituloEl.textContent = yaCerrado
-      ? (intentosRestantes > 0 ? '📄 Reporte ya generado' : '🚫 Límite de generación alcanzado')
+      ? (intentosRestantes > 0 ? '📄 Reporte ya generado' : (plazoReporteVencido ? '⏰ Plazo de generación terminado' : '🚫 Límite de generación alcanzado'))
       : (enProrroga ? '📝 Prórroga de cierre habilitada' : (bloqueante ? '🔒 Cierre de mes' : '📄 Informe pendiente'));
   }
 
@@ -2496,14 +2515,18 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
   if (textoEl) {
     if (yaCerrado) {
       if (intentosRestantes > 0) {
-        textoEl.textContent = `El informe de ${obtenerNombreMes(periodo.split('-')[1])} ${periodo.split('-')[0]} ya fue generado. Si necesita volver a descargarlo, dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'} de generación. Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.`;
+        textoEl.textContent = `El informe de ${obtenerNombreMes(periodo.split('-')[1])} ${periodo.split('-')[0]} ya fue generado. Si necesita volver a descargarlo, dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'} de generación${plazoReporteVigente(data, periodo) ? ', y solo hasta las 23:59 de hoy' : ''}. Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.`;
       } else {
-        textoEl.textContent = 'Ha alcanzado el máximo de intentos permitidos para generar este informe. Por favor, comuníquese con soporte técnico para continuar.';
+        textoEl.textContent = plazoReporteVencido
+          ? 'El plazo para volver a generar este informe terminó. Por favor, comuníquese con soporte técnico para continuar.'
+          : 'Ha alcanzado el máximo de intentos permitidos para generar este informe. Por favor, comuníquese con soporte técnico para continuar.';
       }
     } else if (enProrroga) {
       textoEl.textContent = 'El administrador habilitó una prórroga para completar el mes anterior. Edite los días pendientes en la tabla (clic en una celda), luego indique "Elaborado por" y "Responsable" y genere el informe completo. Mientras tanto puede seguir registrando el mes en curso con normalidad, más abajo.';
     } else if (bloqueante) {
-      textoEl.textContent = 'Debe completar y generar el informe del mes anterior para continuar registrando el mes en curso. Hasta que lo genere, puede editar cualquier día del mes anterior en la tabla de abajo.';
+      textoEl.textContent = plazoVigente
+        ? 'Debe completar y generar el informe del mes anterior para continuar registrando el mes en curso. Puede editar cualquier día del mes anterior en la tabla de abajo hasta las 23:59 de hoy; después ya no podrá corregir novedades.'
+        : 'Debe generar el informe del mes anterior para continuar registrando el mes en curso. El plazo para corregir novedades del mes anterior ya terminó.';
     } else {
       const diaBloqueo = cfg ? cfg.diaBloqueo : null;
       const diaHoy = new Date().getDate();
@@ -2514,7 +2537,7 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
         else if (restantes === 1) plazo = ` Tiene plazo hasta el día ${diaBloqueo} de este mes (falta 1 día).`;
         else                      plazo = ` El plazo vence hoy, día ${diaBloqueo}.`;
       }
-      textoEl.textContent = `El informe del mes anterior ya está habilitado: puede generarlo ahora si ya lo tiene listo.${plazo} Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.`;
+      textoEl.textContent = `El informe del mes anterior ya está habilitado: puede generarlo ahora si ya lo tiene listo.${plazo} Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.${plazoVigente ? ' Puede completar los días pendientes del mes anterior en «Ver detalle» solo hasta las 23:59 de hoy.' : ''}`;
     }
   }
 
@@ -2558,11 +2581,15 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
         avisoIntentos.style.color      = esUltimo ? 'var(--red, #b42318)' : 'var(--gold-dark, #8a6512)';
         avisoIntentos.textContent = esUltimo
           ? 'Este es su último intento disponible para generar el reporte de este mes.'
-          : `Este es su intento ${num} de generación. Dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'}.`;
+          : (intentosUsados === 0
+              ? `Dispone de ${intentosRestantes} intentos de generación.`
+              : `Este es su intento ${num} de generación. Dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'}.`);
       } else {
         avisoIntentos.style.background = 'var(--red-soft, #fde2e2)';
         avisoIntentos.style.color      = 'var(--red, #b42318)';
-        avisoIntentos.textContent = 'Ha alcanzado el máximo de intentos permitidos. Por favor, comuníquese con soporte técnico para continuar.';
+        avisoIntentos.textContent = plazoReporteVencido
+          ? 'El plazo para volver a generar el reporte terminó. Por favor, comuníquese con soporte técnico para continuar.'
+          : 'Ha alcanzado el máximo de intentos permitidos. Por favor, comuníquese con soporte técnico para continuar.';
       }
     }
     if (btnPrincipalTxt) btnPrincipalTxt.textContent = 'Volver a generar reporte (Excel + PDF)';
@@ -2587,6 +2614,25 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
     $('cierre-elaborado-por').style.opacity = '';
     $('cierre-responsable').style.pointerEvents = '';
     $('cierre-responsable').style.opacity = '';
+  }
+
+  // Si la pestaña sigue abierta pasada la medianoche, el mes anterior se cierra solo
+  clearTimeout(timerPlazoCierre);
+  if (!esAdmin() && (yaCerrado ? plazoReporteVigente(data, periodo) : plazoVigente)) {
+    const ahora = new Date();
+    const medianoche = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() + 1, 0, 0, 1);
+    timerPlazoCierre = setTimeout(() => {
+      if (!cierreMesData) return;
+      if (cierreMesData.yaCerrado) {
+        // Informe ya generado: a medianoche los intentos que sobraban se pierden
+        ocultarPantallaCierreMes();
+        toast('⏰ Terminó el plazo para volver a generar el reporte', 'err');
+        return;
+      }
+      renderizarTablaSoloLectura($('tabla-cierre-mes'), cierreMesData.data, cierreMesData.periodo);
+      actualizarEstadoPendientesCierre();
+      toast('⏰ Terminó el plazo para completar el mes anterior', 'err');
+    }, medianoche - ahora);
   }
 
   actualizarEstadoPendientesCierre();
@@ -3111,12 +3157,53 @@ async function restaurarConfigCierrePorDefecto() {
   toast('Valores restaurados en pantalla — pulse "Guardar configuración" para aplicarlos', 'ok');
 }
 
-// Mientras el informe del mes anterior NO se haya generado, el área tiene ese mes
-// COMPLETO abierto para llenarlo, sin pedir nada. Una vez generado, el mes queda
-// cerrado y solo el administrador puede reabrirlo (prórroga o desbloqueos puntuales).
+const MAX_INTENTOS_REPORTE = 3;
+
+// Intentos de generación ya gastados de un informe cerrado. El cierre original cuenta
+// como el intento 1; cuando el administrador repone los intentos el contador queda en 0.
+function intentosUsadosDeReporte(data) {
+  if (!data || data.estado !== 'cerrado') return 0;
+  return typeof data.intentosReporte === 'number' ? data.intentosReporte : 1;
+}
+
+// La reposición de intentos hecha por el administrador vale solo el DÍA en que la
+// hizo (hasta las 23:59). Al día siguiente el contador vuelve a cero.
+function reposicionDeReporteVigente(data) {
+  if (!data || !data.reporteReabiertoFecha) return false;
+  const f = obtenerFechaParts();
+  return data.reporteReabiertoFecha === `${f.periodo}-${String(f.dia).padStart(2, '0')}`;
+}
+
+// Hay ventana para volver a generar el informe: el día 1 del mes siguiente, o el día
+// en que el administrador repuso los intentos. Ambas terminan a las 23:59.
+function plazoReporteVigente(data, periodo) {
+  return plazoLlenadoMesAnteriorVigente(periodo) || reposicionDeReporteVigente(data);
+}
+
+// Volver a generar el informe solo se permite dentro de esa ventana. Pasada la
+// hora el contador queda en cero (los intentos que sobraban se pierden) hasta que
+// el administrador vuelva a reponerlos con "Reponer intentos".
+function intentosRestantesDeReporte(data, periodo) {
+  if (!data || data.estado !== 'cerrado') return MAX_INTENTOS_REPORTE;
+  return plazoReporteVigente(data, periodo)
+    ? Math.max(0, MAX_INTENTOS_REPORTE - intentosUsadosDeReporte(data))
+    : 0;
+}
+
+// El mes anterior solo se puede llenar o corregir durante el DÍA 1 del mes siguiente
+// (hasta las 23:59). Pasada esa hora ya no hay chance de corregir novedades.
+function plazoLlenadoMesAnteriorVigente(periodo) {
+  const hoy = obtenerFechaParts();
+  return obtenerPeriodoSiguiente(periodo) === hoy.periodo && hoy.dia === 1;
+}
+
+// Mientras el informe NO se haya generado y el plazo esté vigente, el área tiene el
+// mes anterior COMPLETO abierto para llenarlo, sin pedir nada. Vencido el plazo (o
+// ya generado el informe) el mes queda cerrado: solo el administrador puede
+// reabrirlo con la prórroga o con desbloqueos puntuales (días en diasDesbloqueados).
 function diasAbiertosEnCierre(data, periodo) {
   const abiertos = new Set((data && data.diasDesbloqueados) || []);
-  if (data && data.estado !== 'cerrado') {
+  if (data && data.estado !== 'cerrado' && (plazoLlenadoMesAnteriorVigente(periodo) || esAdmin())) {
     const total = diasEnMes(periodo);
     for (let d = 1; d <= total; d++) abiertos.add(d);
   }
@@ -3152,7 +3239,9 @@ function actualizarEstadoPendientesCierre() {
 
   if (avisoPend) {
     if (pendientes.length) {
-      avisoPend.textContent = `Faltan días por completar: ${pendientes.join(', ')}. El informe se podrá generar cuando no quede ningún día vacío. Complételos en la tabla: clic en una celda, arrastre sobre la fila de un efectivo para elegir varios días, o clic en el número del día para marcar "Sin novedad" a todos.`;
+      avisoPend.textContent = plazoLlenadoMesAnteriorVigente(periodo)
+        ? `Faltan días por completar: ${pendientes.join(', ')}. El informe se podrá generar cuando no quede ningún día vacío. Complételos HOY, hasta las 23:59, en la tabla: clic en una celda, arrastre sobre la fila de un efectivo para elegir varios días, o clic en el número del día para marcar "Sin novedad" a todos. Después de esa hora ya no se podrán corregir novedades.`
+        : `Faltan días por completar: ${pendientes.join(', ')}. El plazo para completar el mes anterior ya terminó y el informe no se puede generar con días vacíos. Comuníquese con el administrador.`;
       avisoPend.style.display = 'block';
     } else {
       avisoPend.style.display = 'none';
@@ -3316,6 +3405,13 @@ async function seleccionarDiaColumnaCierre(dia) {
   );
   if (!ok) return;
 
+  if (!diasAbiertosEnCierre(data, periodo).has(dia)) {
+    toast('❌ El plazo para modificar el mes anterior ya terminó. Comuníquese con el administrador.', 'err');
+    renderizarTablaSoloLectura($('tabla-cierre-mes'), data, periodo);
+    actualizarEstadoPendientesCierre();
+    return;
+  }
+
   try {
     (data.agentes || []).forEach(agente => {
       if (!agente.novedadesPorDia) agente.novedadesPorDia = {};
@@ -3362,22 +3458,24 @@ async function abrirModalEditarNovedadCierre(idx, dia) {
 
 async function cerrarYExportarMes() {
   if (!cierreMesData) return;
-  const { area, periodo, data, yaCerrado, intentosUsados, intentosRestantes } = cierreMesData;
+  const { area, periodo, data, yaCerrado } = cierreMesData;
 
   // Caso 1: el mes ya estaba cerrado — esto es una REGENERACIÓN del mismo
   // informe, no un cierre nuevo. No se tocan "elaboradoPor"/"responsable"
   // ni la fecha de cierre; solo se reexportan los archivos y sube el contador.
   if (yaCerrado) {
-    const MAX_INTENTOS_REPORTE = 3;
-    if (intentosRestantes <= 0) {
-      toast('❌ Ha alcanzado el máximo de intentos permitidos. Comuníquese con soporte técnico.', 'err');
+      if (intentosRestantesDeReporte(data, periodo) <= 0) {
+      toast(intentosUsadosDeReporte(data) < MAX_INTENTOS_REPORTE
+        ? '❌ El plazo para volver a generar este reporte terminó. Comuníquese con soporte técnico.'
+        : '❌ Ha alcanzado el máximo de intentos permitidos. Comuníquese con soporte técnico.', 'err');
       return;
     }
     try {
       toast('⏳ Generando reporte...', 'ok');
-      const nuevoConteo = intentosUsados + 1;
+      const nuevoConteo = intentosUsadosDeReporte(data) + 1;
       const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
       await window._fb.updateDoc(novedadesRef, { intentosReporte: nuevoConteo });
+      data.intentosReporte = nuevoConteo;
 
       await registrarEnAuditoria('regenerar_reporte', area, usuario.email, null, periodo,
         { intento: nuevoConteo, de: MAX_INTENTOS_REPORTE },
@@ -9831,8 +9929,8 @@ async function reponerIntentosReporte() {
       toast(`${area} todavía no ha generado el informe de ${periodo}`, 'err');
       return;
     }
-    const intentosUsados = d.intentosReporte || 1;
-    if (intentosUsados < 3) {
+    const intentosUsados = intentosUsadosDeReporte(d);
+    if (intentosRestantesDeReporte(d, periodo) > 0) {
       const ok0 = await confirmarAccion(
         `${area} todavía tiene intentos disponibles en ${periodo} (lleva ${intentosUsados} de 3). ¿Reponer de todas formas los 3 intentos completos?`,
         'Reponer intentos de generación'
@@ -9840,19 +9938,24 @@ async function reponerIntentosReporte() {
       if (!ok0) return;
     } else {
       const ok = await confirmarAccion(
-        `Se repondrán los 3 intentos de generación de reporte para ${area} — ${periodo}. ¿Continuar?`,
+        `Se repondrán los 3 intentos de generación de reporte para ${area} — ${periodo} y se le devolverá el acceso solo hasta las 23:59 de hoy; al día siguiente el contador vuelve a cero. ¿Continuar?`,
         'Reponer intentos de generación'
       );
       if (!ok) return;
     }
 
-    await window._fb.updateDoc(novedadesRef, { intentosReporte: 0 });
+    await window._fb.updateDoc(novedadesRef, {
+      intentosReporte: 0,
+      reporteReabiertoFecha: `${obtenerFechaParts().periodo}-${String(obtenerFechaParts().dia).padStart(2, '0')}`,
+      reporteReabiertoEn: new Date(),
+      reporteReabiertoPor: usuario.email
+    });
     await registrarEnAuditoria(
       'reponer_intentos_reporte', area, usuario.email, null, periodo, {},
       `Intentos de generación de reporte repuestos para ${area} — ${periodo}, por ${usuario.email}`
     );
 
-    toast(`✅ Intentos repuestos para ${area} — ${periodo}`, 'ok');
+    toast(`✅ Intentos repuestos para ${area} — ${periodo}, válidos hasta las 23:59 de hoy`, 'ok');
     if (areaActual === area) cargarNovedadesActuales();
 
   } catch(e) {
