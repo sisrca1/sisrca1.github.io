@@ -1369,6 +1369,10 @@
             <label class="form-label">Mensaje para quien intente entrar (opcional)</label>
             <input type="text" id="mantenimiento-mensaje" class="form-select" placeholder="Ej.: Volvemos en unos minutos, estamos aplicando una mejora al sistema." onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
           </div>
+          <div class="form-field" style="max-width:520px;margin-top:12px;">
+            <label class="form-label">Correos de prueba que pueden entrar aunque esté activo (opcional)</label>
+            <input type="text" id="mantenimiento-correos-exentos" class="form-select" placeholder="correo1@gmail.com, correo2@gmail.com" onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
+          </div>
           <button class="btn-acc btn-acc-blue" style="margin-top:14px;" onclick="guardarModoMantenimiento()">💾 Guardar</button>
           <div id="mantenimiento-info" style="margin-top:12px;font-size:11px;color:var(--txt2);"></div>
         </div>

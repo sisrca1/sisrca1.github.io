@@ -427,6 +427,13 @@ function iniciarListenerAccesoUsuario() {
    sin recargar, apenas el documento cambia. */
 let unsubMantenimiento = null;
 
+// Correos de prueba que el administrador deja pasar aunque el mantenimiento esté activo
+function correoExentoDeMantenimiento(data) {
+  const lista = (data && Array.isArray(data.correosExentos)) ? data.correosExentos : [];
+  const mio = ((typeof usuario !== 'undefined' && usuario && usuario.email) || '').toLowerCase();
+  return !!mio && lista.map(c => String(c).toLowerCase()).includes(mio);
+}
+
 function iniciarListenerMantenimiento() {
   if (unsubMantenimiento) unsubMantenimiento();
   const ref = window._fb.doc(db, 'sistema', 'mantenimiento');
@@ -434,7 +441,7 @@ function iniciarListenerMantenimiento() {
     const data = snap.exists() ? snap.data() : null;
     const activo = !!(data && data.activo);
 
-    if (activo && !esAdmin()) {
+    if (activo && !esAdmin() && !correoExentoDeMantenimiento(data)) {
       if ($('pantalla-mantenimiento-mensaje')) {
         $('pantalla-mantenimiento-mensaje').textContent =
           (data.mensaje && data.mensaje.trim())
@@ -473,6 +480,10 @@ function iniciarListenerMantenimiento() {
       if ($('mantenimiento-mensaje') && data && data.mensaje && !$('mantenimiento-mensaje').dataset.editando) {
         $('mantenimiento-mensaje').value = data.mensaje;
       }
+      const inpEx = $('mantenimiento-correos-exentos');
+      if (inpEx && data && !inpEx.dataset.editando) {
+        inpEx.value = Array.isArray(data.correosExentos) ? data.correosExentos.join(', ') : '';
+      }
     }
   }, (e) => console.warn('Listener de mantenimiento interrumpido:', e.message));
 }
@@ -481,10 +492,16 @@ async function guardarModoMantenimiento() {
   if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
   const activo = $('mantenimiento-activo').checked;
   const mensaje = $('mantenimiento-mensaje').value.trim();
+  const inpEx = $('mantenimiento-correos-exentos');
+  const correosExentos = inpEx
+    ? [...new Set(inpEx.value.split(/[\s,;]+/).map(c => c.trim().toLowerCase()).filter(c => c.includes('@')))]
+    : [];
 
   if (activo) {
     const ok = await confirmarAccion(
-      'Esto va a bloquear el acceso a TODOS los secretarios y al supervisor de inmediato — solo usted va a poder entrar. ¿Confirma que quiere activar el Modo Mantenimiento?',
+      'Esto va a bloquear el acceso a TODOS los secretarios y al supervisor de inmediato — solo usted' +
+      (correosExentos.length ? ` y los ${correosExentos.length} correo(s) de prueba indicados` : '') +
+      ' van a poder entrar. ¿Confirma que quiere activar el Modo Mantenimiento?',
       'Activar Modo Mantenimiento'
     );
     if (!ok) { $('mantenimiento-activo').checked = false; return; }
@@ -492,14 +509,14 @@ async function guardarModoMantenimiento() {
 
   try {
     await window._fb.setDoc(window._fb.doc(db, 'sistema', 'mantenimiento'), {
-      activo, mensaje,
+      activo, mensaje, correosExentos,
       activadoPor: usuario.email,
       fecha: new Date()
     }, { merge: true });
 
     await registrarEnAuditoria(
       activo ? 'activar_mantenimiento' : 'desactivar_mantenimiento',
-      null, usuario.email, null, null, { mensaje },
+      null, usuario.email, null, null, { mensaje, correosExentos },
       `Modo Mantenimiento ${activo ? 'ACTIVADO' : 'desactivado'} por ${usuario.email}`
     );
 
