@@ -1260,7 +1260,16 @@ async function cargarNovedadesActuales() {
     // anterior. Mientras esté activa no se bloquea el mes en curso.
     const enProrroga = cierrePendiente && !!(docAnterior.data().prorroga && docAnterior.data().prorroga.activa);
 
-    if (cierrePendiente && bloqueoActivo && !exentoDeBloqueo && !enProrroga) {
+    // Desde el día 2 el mes anterior deja de verse para las áreas: solo ven el mes en
+    // curso. Lo siguen viendo el administrador y el supervisor, y el área a la que el
+    // administrador le dio una prórroga o le repuso los intentos del informe.
+    const plazoMesAnterior = plazoLlenadoMesAnteriorVigente(periodoAnterior);
+    const reposicionHoy    = prevCerrado && reposicionDeReporteVigente(docAnterior.data());
+    const veMesAnterior    = exentoDeBloqueo || plazoMesAnterior || enProrroga || reposicionHoy;
+
+    // El bloqueo del mes en curso solo actúa mientras el área aún puede ver y
+    // completar el mes anterior (el día 1); después ya no tendría cómo desbloquearse.
+    if (cierrePendiente && bloqueoActivo && !exentoDeBloqueo && !enProrroga && plazoMesAnterior) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), true, cfgCierreEfectiva);
       return;
     }
@@ -1273,7 +1282,9 @@ async function cargarNovedadesActuales() {
       (intentosRestantesReporte > 0 ||
        (intentosUsadosReporte >= MAX_INTENTOS_REPORTE && plazoReporteVigente(datosPrevReporte, periodoAnterior)));
 
-    if (cierrePendiente && (reporteHabilitado || enProrroga)) {
+    if (!veMesAnterior) {
+      ocultarPantallaCierreMes();
+    } else if (cierrePendiente && (reporteHabilitado || enProrroga)) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), false, cfgCierreEfectiva);
     } else if (puedeReabrirPorIntentos) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), false, cfgCierreEfectiva);
@@ -2289,14 +2300,16 @@ async function guardarNovedad() {
     : `Día ${diasAEditar[0]}`;
 
   // Mes anterior: el plazo se vuelve a comprobar al guardar (por si se pasó la hora)
-  if (modalEsEdicionDeCierre && cierreMesData) {
-    const abiertosAhora = diasAbiertosEnCierre(cierreMesData.data, cierreMesData.periodo);
-    if (diasAEditar.some(d => !abiertosAhora.has(d))) {
+  if (modalEsEdicionDeCierre) {
+    const abiertosAhora = cierreMesData ? diasAbiertosEnCierre(cierreMesData.data, cierreMesData.periodo) : null;
+    if (!abiertosAhora || diasAEditar.some(d => !abiertosAhora.has(d))) {
       toast('❌ El plazo para modificar el mes anterior ya terminó. Comuníquese con el administrador.', 'err');
       cerrarModalNovedad();
       modalEsEdicionDeCierre = false;
-      renderizarTablaSoloLectura($('tabla-cierre-mes'), cierreMesData.data, cierreMesData.periodo);
-      actualizarEstadoPendientesCierre();
+      if (cierreMesData) {
+        renderizarTablaSoloLectura($('tabla-cierre-mes'), cierreMesData.data, cierreMesData.periodo);
+        actualizarEstadoPendientesCierre();
+      }
       return;
     }
   }
@@ -2616,22 +2629,17 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
     $('cierre-responsable').style.opacity = '';
   }
 
-  // Si la pestaña sigue abierta pasada la medianoche, el mes anterior se cierra solo
+  // Si la pestaña sigue abierta pasada la medianoche, el mes anterior deja de verse solo
   clearTimeout(timerPlazoCierre);
-  if (!esAdmin() && (yaCerrado ? plazoReporteVigente(data, periodo) : plazoVigente)) {
+  if (!esAdmin() && !enProrroga && (yaCerrado ? plazoReporteVigente(data, periodo) : plazoVigente)) {
     const ahora = new Date();
     const medianoche = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() + 1, 0, 0, 1);
     timerPlazoCierre = setTimeout(() => {
       if (!cierreMesData) return;
-      if (cierreMesData.yaCerrado) {
-        // Informe ya generado: a medianoche los intentos que sobraban se pierden
-        ocultarPantallaCierreMes();
-        toast('⏰ Terminó el plazo para volver a generar el reporte', 'err');
-        return;
-      }
-      renderizarTablaSoloLectura($('tabla-cierre-mes'), cierreMesData.data, cierreMesData.periodo);
-      actualizarEstadoPendientesCierre();
-      toast('⏰ Terminó el plazo para completar el mes anterior', 'err');
+      toast(cierreMesData.yaCerrado
+        ? '⏰ Terminó el plazo para volver a generar el reporte'
+        : '⏰ Terminó el plazo para completar el mes anterior', 'err');
+      cargarNovedadesActuales(); // vuelve a evaluar: desde el día 2 solo queda el mes en curso
     }, medianoche - ahora);
   }
 
