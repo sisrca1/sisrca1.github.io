@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="img/favicon_32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="img/favicon_16.png">
 <link rel="apple-touch-icon" href="img/SISCTE_logo_icono_256.png">
-<link rel="stylesheet" href="styles.css?v=20261002b">
+<link rel="stylesheet" href="styles.css?v=20261002g">
 <link rel="stylesheet" href="styles_novedades_v6.css?v=20260807b">
 </head>
 <body>
@@ -299,6 +299,9 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--txt3);pointer-events:none;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" id="buscar-codigo-agente" class="filtro-input" placeholder="Buscar por código..." style="padding-left:32px;width:180px;" oninput="filtrarTablaPorCodigo()">
           </div>
+          <button class="btn-acc btn-acc-blue" id="btn-llenar-mes-admin" onclick="abrirModalLlenarMes()" style="display:none;">
+            📅 Llenar mes completo
+          </button>
           <button class="btn-acc btn-acc-orange" id="btn-combinar-duplicados" onclick="combinarDuplicadosArea()" style="display:none;">
             🧹 Combinar duplicados de esta área
           </button>
@@ -350,12 +353,12 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           </div>
           <div>
-            <div class="envio-card-titulo">Formato de informe de entrega <span class="inf-opcional">OPCIONAL</span></div>
-            <div class="envio-card-sub" id="inf-card-sub">El sistema prepara la carta de entrega con los datos del personal. Usted solo elige a las personas.</div>
+            <div class="envio-card-titulo">Formato de informe <span class="inf-opcional">OPCIONAL</span></div>
+            <div class="envio-card-sub" id="inf-card-sub">El sistema prepara el informe con los datos del personal. Usted solo elige a las personas.</div>
           </div>
         </div>
-        <p class="inf-ayuda">¿No sabe cómo redactar la carta? Genérela aquí, imprímala, fírmela y súbala más abajo en <strong>Informe de Entrega</strong>. Si prefiere hacerla por su cuenta, puede omitir este paso.</p>
-        <button type="button" class="inf-btn-abrir" id="btn-inf-abrir" onclick="abrirModalInforme()">📄 Generar Informe de Entrega</button>
+        <p class="inf-ayuda">¿No sabe cómo redactar el informe? Genérelo aquí, imprímalo, fírmelo y súbalo más abajo. El título del documento (Entrega o Atraso) lo define el sistema según el plazo de envío. Si prefiere hacerlo por su cuenta, puede omitir este paso.</p>
+        <button type="button" class="inf-btn-abrir" id="btn-inf-abrir" onclick="abrirModalInforme()">📄 Generar informe</button>
       </div>
 
       <div class="envio-card">
@@ -1597,7 +1600,65 @@
   </div>
 </div>
 
-<!-- ═══ MODAL: datos del Informe de Entrega / Atraso ═══ -->
+<!-- ═══ MODAL: llenar el mes completo (solo administrador) ═══ -->
+<div id="modal-llenar-mes" class="modal-overlay" style="display:none">
+  <div class="modal-card" style="max-width:520px;">
+    <div class="modal-header">
+      <div class="modal-ico">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </div>
+      <div>
+        <div class="modal-titulo">Llenar el mes completo</div>
+        <div class="modal-sub"><span id="ml-area"></span> · <span id="ml-mes"></span></div>
+      </div>
+      <button class="modal-cerrar" onclick="cerrarModalLlenarMes()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ml-aviso" class="ml-aviso" style="display:none"></div>
+      <p class="inf-intro">Pone el código elegido en las casillas <strong>vacías</strong> de todos los efectivos de esta área. Lo que ya está registrado no se cambia.</p>
+
+      <label class="inf-etq" for="ml-codigo">Código que se aplicará</label>
+      <select id="ml-codigo" class="form-select" onchange="mlActualizarResumen()"></select>
+
+      <div class="inf-fila" style="margin-top:4px;">
+        <div>
+          <label class="inf-etq" for="ml-desde">Desde el día</label>
+          <input type="number" id="ml-desde" class="form-select" min="1" max="31" oninput="mlActualizarResumen()">
+        </div>
+        <div>
+          <label class="inf-etq" for="ml-hasta">Hasta el día</label>
+          <input type="number" id="ml-hasta" class="form-select" min="1" max="31" oninput="mlActualizarResumen()">
+        </div>
+      </div>
+      <div class="ml-atajos">
+        <button type="button" class="btn-acc btn-acc-ghost" onclick="mlAtajo('mes')">Todo el mes</button>
+        <button type="button" class="btn-acc btn-acc-ghost" onclick="mlAtajo('hoy')">Hasta hoy</button>
+      </div>
+      <details class="inf-detalles" id="ml-ef-det" style="margin-top:14px;">
+        <summary>
+          <span class="inf-det-tit">Efectivos a los que se aplicará <small>(desmarque a quienes se trasladaron de área este mes)</small></span>
+          <span class="inf-det-res" id="ml-efectivos-res"></span>
+        </summary>
+        <div class="inf-det-cuerpo">
+          <div class="ml-atajos" style="margin-top:0;margin-bottom:8px;">
+            <button type="button" class="btn-acc btn-acc-ghost" onclick="mlMarcarTodos(true)">Marcar todos</button>
+            <button type="button" class="btn-acc btn-acc-ghost" onclick="mlMarcarTodos(false)">Desmarcar todos</button>
+          </div>
+          <div id="ml-efectivos" class="ml-ef-lista"></div>
+        </div>
+      </details>
+      <p class="ml-nota">Un efectivo trasladado de área tiene vacíos los días que corresponden a la otra área, y el sistema no los distingue de un día pendiente. Si hubo traslados este mes, desmárquelo en la lista.</p>
+
+      <div id="ml-resumen" class="ml-resumen"></div>
+    </div>
+    <div class="inf-pie">
+      <button type="button" class="inf-btn-cancelar" onclick="cerrarModalLlenarMes()">Cancelar</button>
+      <button type="button" class="inf-btn-generar" id="btn-ml-aplicar" onclick="llenarMesCompleto()">Llenar casillas vacías</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: generar informe (Entrega / Atraso) ═══ -->
 <div id="modal-informe" class="modal-overlay" style="display:none">
   <div class="modal-card inf-modal">
     <div class="modal-header">
@@ -1606,50 +1667,66 @@
       </div>
       <div>
         <div class="modal-titulo" id="inf-modal-titulo">Informe de Entrega</div>
-        <div class="modal-sub">Área: <span id="inf-area-nombre"></span> · los datos salen de la base de personal</div>
+        <div class="modal-sub">Área: <span id="inf-area-nombre"></span></div>
       </div>
       <button class="modal-cerrar" onclick="cerrarModalInforme()">✕</button>
     </div>
     <div class="modal-body">
       <div id="inf-aviso" class="inf-aviso"></div>
+      <p class="inf-intro">Complete los 2 pasos y descargue el PDF listo para imprimir y firmar. Todo lo demás ya viene llenado.</p>
 
-      <div class="inf-fila">
-        <div class="form-field">
-          <label class="form-label">Lugar</label>
-          <input type="text" id="inf-lugar" class="form-select" autocomplete="off">
-        </div>
-        <div class="form-field">
-          <label class="form-label">Fecha <small class="inf-peq">(de este mes, hasta hoy)</small></label>
-          <input type="date" id="inf-fecha" class="form-select">
-        </div>
+      <div class="inf-paso">
+        <span class="inf-num">1</span>
+        <div><div class="inf-paso-tit">¿A quién va dirigido el informe?</div>
+        <div class="inf-paso-ayuda">Escriba el nombre o el código y elija a la persona de la lista.</div></div>
       </div>
-
-      <div class="form-field">
-        <label class="form-label">Asunto</label>
-        <input type="text" id="inf-asunto" class="form-select" autocomplete="off">
-      </div>
-      <div class="form-field">
-        <label class="form-label">Complemento del área <small class="inf-peq">(opcional, ej.: Grupo 1 – 2)</small></label>
-        <input type="text" id="inf-complemento" class="form-select" autocomplete="off" placeholder="Se escribe después del nombre del área en el texto de la carta">
-      </div>
-
-      <div class="inf-seccion">Dirigido a <small>(PARA)</small></div>
+      <label class="inf-etq" for="inf-in-para">Persona</label>
       <div class="inf-cb">
         <input type="text" id="inf-in-para" class="form-select" autocomplete="off"
-               placeholder="Escriba el código o el nombre para buscar..."
+               placeholder="Escriba el nombre o el código y elija de la lista"
                onfocus="infCbAbrir('para')" oninput="infCbEscribir('para')">
         <div id="inf-lista-para" class="inf-cb-lista" style="display:none"></div>
       </div>
-      <input type="text" id="inf-cargo-para" class="form-select inf-cargo" autocomplete="off"
+      <label class="inf-etq" for="inf-cargo-para">Cargo o dependencia</label>
+      <input type="text" id="inf-cargo-para" class="form-select" autocomplete="off"
              placeholder="Cargo o dependencia de quien recibe" oninput="infCargoEscribir('para')">
+      <div class="inf-err" id="inf-err-para" style="display:none"></div>
 
-      <div class="inf-seccion">Quién firma <small>(DE · de 1 a 4 personas)</small></div>
+      <div class="inf-paso">
+        <span class="inf-num">2</span>
+        <div><div class="inf-paso-tit">¿Quién firma el informe?</div>
+        <div class="inf-paso-ayuda">Pueden firmar de 1 a 4 personas. La primera figura como remitente del informe.</div></div>
+      </div>
       <div id="inf-firmantes"></div>
       <button type="button" class="inf-btn-agregar" id="btn-inf-agregar" onclick="infAgregarFirmante()">+ Agregar otro firmante</button>
+
+      <details class="inf-detalles" id="inf-detalles">
+        <summary>
+          <span class="inf-det-tit">Datos del documento <small>(ya vienen llenos; cambie solo si hace falta)</small></span>
+          <span class="inf-det-res" id="inf-resumen-datos"></span>
+        </summary>
+        <div class="inf-det-cuerpo">
+          <div class="inf-fila">
+            <div>
+              <label class="inf-etq" for="inf-lugar">Lugar donde se emite</label>
+              <input type="text" id="inf-lugar" class="form-select" autocomplete="off" oninput="infLimpiarError('datos')">
+            </div>
+            <div>
+              <label class="inf-etq" for="inf-fecha">Fecha <small>(de este mes, hasta hoy)</small></label>
+              <input type="date" id="inf-fecha" class="form-select" oninput="infLimpiarError('datos');infActualizarResumen()" onchange="infLimpiarError('datos');infActualizarResumen()">
+            </div>
+          </div>
+          <label class="inf-etq" for="inf-asunto">Asunto</label>
+          <input type="text" id="inf-asunto" class="form-select" autocomplete="off" oninput="infLimpiarError('datos');infActualizarResumen()">
+          <label class="inf-etq" for="inf-complemento">Complemento del área <small>(opcional, ej.: Grupo 1 – 2)</small></label>
+          <input type="text" id="inf-complemento" class="form-select" autocomplete="off" placeholder="Se escribe después del nombre del área en el texto del informe">
+          <div class="inf-err" id="inf-err-datos" style="display:none"></div>
+        </div>
+      </details>
     </div>
     <div class="inf-pie">
       <button type="button" class="inf-btn-cancelar" onclick="cerrarModalInforme()">Cancelar</button>
-      <button type="button" class="inf-btn-generar" id="btn-inf-generar" onclick="infGenerar()">📄 Generar PDF</button>
+      <button type="button" class="inf-btn-generar" id="btn-inf-generar" onclick="infGenerar()">📄 Descargar PDF</button>
     </div>
   </div>
 </div>
@@ -2162,6 +2239,6 @@
   });
 </script>
 
-<script type="module" src="app.js?v=20261002b"></script>
+<script type="module" src="app.js?v=20261002g"></script>
 </body>
 </html>
