@@ -985,10 +985,10 @@ body.dark-mode #admin-tabs{
 .inf-firmante-cab small{font-weight:500;color:var(--txt2);}
 .inf-quitar{background:none;border:1px solid var(--border);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;color:var(--txt2);font-family:inherit;}
 .inf-quitar:hover:not(:disabled){border-color:var(--red);color:var(--red);}
-.inf-quitar:disabled{opacity:.4;cursor:not-allowed;}
+.inf-quitar:disabled{opacity:.65;cursor:not-allowed;}
 .inf-btn-agregar{width:100%;background:none;border:1.5px dashed var(--border);border-radius:9px;padding:9px;font-size:12px;font-weight:700;color:#1e3a6e;cursor:pointer;font-family:inherit;}
 .inf-btn-agregar:hover:not(:disabled){border-color:#1e3a6e;background:var(--blue-l);}
-.inf-btn-agregar:disabled{opacity:.5;cursor:not-allowed;color:var(--txt2);}
+.inf-btn-agregar:disabled{opacity:.7;cursor:not-allowed;color:var(--txt2);}
 .inf-pie{display:flex;justify-content:flex-end;gap:10px;padding:12px 20px 16px;border-top:1px solid var(--border);}
 
 /* ══ Modo Mantenimiento: dibujos, reapertura automática y lista de correos ══ */
@@ -1056,3 +1056,4 @@ body.dark-mode .ml-aviso{background:#2a2108;border-color:#6b5513;color:#fcd34d;}
 .ml-ef:hover{background:var(--blue-l);}
 .ml-ef-nom{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:600;color:var(--txt);}
 .ml-ef-vac{flex-shrink:0;font-size:11px;color:var(--txt2);}
+body.dark-mode .inf-btn-agregar:disabled{color:var(--txt2);}

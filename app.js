@@ -4229,6 +4229,15 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
     { width: 22 }
   ];
 
+  // GRADO y APELLIDOS Y NOMBRES se ajustan al texto más largo de ESTE reporte,
+  // para que no se corten (con un mínimo y un máximo razonables)
+  const anchoParaTexto = (textos, minimo, maximo) => {
+    const mayor = Math.max(0, ...textos.map(t => String(t || '').trim().length));
+    return Math.min(maximo, Math.max(minimo, Math.ceil(mayor * 1.1) + 2));
+  };
+  ws.getColumn(3).width = anchoParaTexto((data.agentes || []).map(a => a.grado), 12, 36);
+  ws.getColumn(4).width = anchoParaTexto((data.agentes || []).map(a => a.apellidosNombres), 30, 60);
+
   const estiloNavy = (cell) => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
     cell.font = { color: { argb: BLANCO }, bold: true };
@@ -4316,12 +4325,23 @@ async function exportarNovedadesExcel(data, area, periodo, elaboradoPor, respons
   filaNomTitulo.getCell(1).value = 'NOMENCLATURA';
   filaNomTitulo.eachCell({ includeEmpty: true }, c => estiloNavy(c));
 
+  // El verde debe cubrir todo el texto: se une desde la columna 2 hasta la primera columna
+  // donde ya cabe la descripción más larga, y todos los renglones quedan del mismo largo.
+  const textoMasLargo = Math.max(...CODIGOS_VALIDOS.map(c => String(CODIGOS_DESC[c] || '').length));
+  let colFinNom = 2;
+  let anchoAcum = ws.getColumn(2).width;
+  while (anchoAcum < Math.ceil(textoMasLargo * 1.1) + 2 && colFinNom < numCols) {
+    colFinNom++;
+    anchoAcum += ws.getColumn(colFinNom).width;
+  }
   CODIGOS_VALIDOS.forEach(c => {
     const row = ws.addRow([c, CODIGOS_DESC[c]]);
-    row.eachCell({ includeEmpty: false }, cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE_CLARO } };
-    });
+    ws.mergeCells(row.number, 2, row.number, colFinNom);
+    for (let col = 1; col <= colFinNom; col++) {
+      row.getCell(col).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE_CLARO } };
+    }
     row.getCell(1).font = { bold: true };
+    row.getCell(2).alignment = { horizontal: 'left', vertical: 'middle' };
   });
 
   ws.addRow([]);
