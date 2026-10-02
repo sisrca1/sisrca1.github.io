@@ -119,7 +119,7 @@ async function initFirebase() {
   try {
     const { initializeApp }
       = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-    const { getFirestore, collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch, onSnapshot }
+    const { getFirestore, collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch, onSnapshot, serverTimestamp }
       = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
     const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
       getRedirectResult, signOut, onAuthStateChanged,
@@ -132,7 +132,7 @@ async function initFirebase() {
     auth = getAuth(app);
 
     window._fb = {
-      collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch, onSnapshot,
+      collection, addDoc, getDocs, orderBy, query, doc, getDoc, setDoc, updateDoc, deleteDoc, where, limit, startAfter, writeBatch, onSnapshot, serverTimestamp,
       GoogleAuthProvider, signInWithPopup, signInWithRedirect,
       getRedirectResult, signOut, onAuthStateChanged,
       createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -164,6 +164,9 @@ async function initFirebase() {
         // mientras esta pestaña sigue abierta, se entera sin recargar la página.
         iniciarListenerPermisoUsuario();
         iniciarListenerAccesoUsuario();
+        // Hora del servidor primero (máx. 4 s de espera) para que el cronómetro nunca dependa del reloj del equipo
+        iniciarSincronizacionReloj();
+        await Promise.race([sincronizarRelojServidor(), new Promise(r => setTimeout(r, 4000))]);
         iniciarListenerMantenimiento();
       } else {
         detenerListenersPropios();
@@ -354,6 +357,7 @@ function detenerListenersPropios() {
   if (unsubPermisoUsuario) { unsubPermisoUsuario(); unsubPermisoUsuario = null; }
   if (unsubAccesoUsuario)  { unsubAccesoUsuario();  unsubAccesoUsuario = null; }
   if (unsubMantenimiento)  { unsubMantenimiento();  unsubMantenimiento = null; }
+  detenerTimersMantenimiento();
   hide('pantalla-mantenimiento');
   const avisoAdmin = $('mantenimiento-info-flotante');
   if (avisoAdmin) avisoAdmin.remove();
@@ -421,11 +425,110 @@ function iniciarListenerAccesoUsuario() {
   }, (e) => console.warn('Listener de acceso interrumpido:', e.message));
 }
 
-/* ── Modo Mantenimiento — tiempo real ──
+const MANT_SVG = {"letrero": "<svg viewBox=\"0 0 600 440\" role=\"img\" aria-label=\"Letrero de mantenimiento colgando de una grúa, con conos y una luz de obra parpadeando\" xmlns=\"http://www.w3.org/2000/svg\"><defs><linearGradient id=\"@P@-oro\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0\" stop-color=\"#f5d37a\"/><stop offset=\"1\" stop-color=\"#e8b84b\"/></linearGradient><pattern id=\"@P@-franja\" patternUnits=\"userSpaceOnUse\" width=\"28\" height=\"28\" patternTransform=\"rotate(45)\"><rect width=\"28\" height=\"28\" fill=\"#e8b84b\"/><rect width=\"14\" height=\"28\" fill=\"#0d1b3e\"/></pattern><radialGradient id=\"@P@-luz\"><stop offset=\"0\" stop-color=\"#fb923c\" stop-opacity=\".95\"/><stop offset=\"1\" stop-color=\"#fb923c\" stop-opacity=\"0\"/></radialGradient><filter id=\"@P@-sombra\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"150%\"><feDropShadow dx=\"0\" dy=\"6\" stdDeviation=\"5\" flood-color=\"#000\" flood-opacity=\".35\"/></filter></defs><ellipse cx=\"300\" cy=\"404\" rx=\"272\" ry=\"13\" fill=\"#000\" opacity=\".28\"/><g transform=\"translate(520.00,72.00)\"><g><path d=\"M19.80,-2.82 L27.32,-2.15 L27.32,2.15 L19.80,2.82 A20.00,20.00 0 0 1 18.56,7.46 L18.56,7.46 L24.73,11.80 L22.58,15.52 L15.74,12.34 A20.00,20.00 0 0 1 12.34,15.74 L12.34,15.74 L15.52,22.58 L11.80,24.73 L7.46,18.56 A20.00,20.00 0 0 1 2.82,19.80 L2.82,19.80 L2.15,27.32 L-2.15,27.32 L-2.82,19.80 A20.00,20.00 0 0 1 -7.46,18.56 L-7.46,18.56 L-11.80,24.73 L-15.52,22.58 L-12.34,15.74 A20.00,20.00 0 0 1 -15.74,12.34 L-15.74,12.34 L-22.58,15.52 L-24.73,11.80 L-18.56,7.46 A20.00,20.00 0 0 1 -19.80,2.82 L-19.80,2.82 L-27.32,2.15 L-27.32,-2.15 L-19.80,-2.82 A20.00,20.00 0 0 1 -18.56,-7.46 L-18.56,-7.46 L-24.73,-11.80 L-22.58,-15.52 L-15.74,-12.34 A20.00,20.00 0 0 1 -12.34,-15.74 L-12.34,-15.74 L-15.52,-22.58 L-11.80,-24.73 L-7.46,-18.56 A20.00,20.00 0 0 1 -2.82,-19.80 L-2.82,-19.80 L-2.15,-27.32 L2.15,-27.32 L2.82,-19.80 A20.00,20.00 0 0 1 7.46,-18.56 L7.46,-18.56 L11.80,-24.73 L15.52,-22.58 L12.34,-15.74 A20.00,20.00 0 0 1 15.74,-12.34 L15.74,-12.34 L22.58,-15.52 L24.73,-11.80 L18.56,-7.46 A20.00,20.00 0 0 1 19.80,-2.82Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"10.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"12.47\" cy=\"7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"14.40\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-12.47\" cy=\"7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-12.47\" cy=\"-7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-14.40\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"12.47\" cy=\"-7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"3.40\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"360 0 0\" dur=\"14.00s\" repeatCount=\"indefinite\"/></g></g><g transform=\"translate(520.00,112.00)\"><g><path d=\"M-6.82,-9.87 L-9.48,-16.93 L-5.27,-18.67 L-2.16,-11.80 A12.00,12.00 0 0 1 2.16,-11.80 L2.16,-11.80 L5.27,-18.67 L9.48,-16.93 L6.82,-9.87 A12.00,12.00 0 0 1 9.87,-6.82 L9.87,-6.82 L16.93,-9.48 L18.67,-5.27 L11.80,-2.16 A12.00,12.00 0 0 1 11.80,2.16 L11.80,2.16 L18.67,5.27 L16.93,9.48 L9.87,6.82 A12.00,12.00 0 0 1 6.82,9.87 L6.82,9.87 L9.48,16.93 L5.27,18.67 L2.16,11.80 A12.00,12.00 0 0 1 -2.16,11.80 L-2.16,11.80 L-5.27,18.67 L-9.48,16.93 L-6.82,9.87 A12.00,12.00 0 0 1 -9.87,6.82 L-9.87,6.82 L-16.93,9.48 L-18.67,5.27 L-11.80,2.16 A12.00,12.00 0 0 1 -11.80,-2.16 L-11.80,-2.16 L-18.67,-5.27 L-16.93,-9.48 L-9.87,-6.82 A12.00,12.00 0 0 1 -6.82,-9.87Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"6.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"7.48\" cy=\"4.32\" r=\"1.32\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"8.64\" r=\"1.32\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-7.48\" cy=\"4.32\" r=\"1.32\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-7.48\" cy=\"-4.32\" r=\"1.32\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-8.64\" r=\"1.32\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"7.48\" cy=\"-4.32\" r=\"1.32\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"2.04\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"-360 0 0\" dur=\"9.33s\" repeatCount=\"indefinite\"/></g></g><g transform=\"translate(78.00,84.00)\"><g><path d=\"M19.80,-2.82 L27.32,-2.15 L27.32,2.15 L19.80,2.82 A20.00,20.00 0 0 1 18.56,7.46 L18.56,7.46 L24.73,11.80 L22.58,15.52 L15.74,12.34 A20.00,20.00 0 0 1 12.34,15.74 L12.34,15.74 L15.52,22.58 L11.80,24.73 L7.46,18.56 A20.00,20.00 0 0 1 2.82,19.80 L2.82,19.80 L2.15,27.32 L-2.15,27.32 L-2.82,19.80 A20.00,20.00 0 0 1 -7.46,18.56 L-7.46,18.56 L-11.80,24.73 L-15.52,22.58 L-12.34,15.74 A20.00,20.00 0 0 1 -15.74,12.34 L-15.74,12.34 L-22.58,15.52 L-24.73,11.80 L-18.56,7.46 A20.00,20.00 0 0 1 -19.80,2.82 L-19.80,2.82 L-27.32,2.15 L-27.32,-2.15 L-19.80,-2.82 A20.00,20.00 0 0 1 -18.56,-7.46 L-18.56,-7.46 L-24.73,-11.80 L-22.58,-15.52 L-15.74,-12.34 A20.00,20.00 0 0 1 -12.34,-15.74 L-12.34,-15.74 L-15.52,-22.58 L-11.80,-24.73 L-7.46,-18.56 A20.00,20.00 0 0 1 -2.82,-19.80 L-2.82,-19.80 L-2.15,-27.32 L2.15,-27.32 L2.82,-19.80 A20.00,20.00 0 0 1 7.46,-18.56 L7.46,-18.56 L11.80,-24.73 L15.52,-22.58 L12.34,-15.74 A20.00,20.00 0 0 1 15.74,-12.34 L15.74,-12.34 L22.58,-15.52 L24.73,-11.80 L18.56,-7.46 A20.00,20.00 0 0 1 19.80,-2.82Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"10.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"12.47\" cy=\"7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"14.40\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-12.47\" cy=\"7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-12.47\" cy=\"-7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-14.40\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"12.47\" cy=\"-7.20\" r=\"2.20\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"3.40\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"-360 0 0\" dur=\"16.00s\" repeatCount=\"indefinite\"/></g></g><g filter=\"url(#@P@-sombra)\"><line x1=\"228\" y1=\"356\" x2=\"206\" y2=\"402\" stroke=\"#cfd8ea\" stroke-width=\"10\" stroke-linecap=\"round\"/><line x1=\"372\" y1=\"356\" x2=\"394\" y2=\"402\" stroke=\"#cfd8ea\" stroke-width=\"10\" stroke-linecap=\"round\"/><rect x=\"216\" y=\"372\" width=\"168\" height=\"18\" rx=\"4\" fill=\"#e8eef9\"/><rect x=\"204\" y=\"322\" width=\"192\" height=\"36\" rx=\"6\" fill=\"url(#@P@-franja)\" stroke=\"#0d1b3e\" stroke-width=\"3\"/></g><rect x=\"284\" y=\"304\" width=\"32\" height=\"18\" rx=\"4\" fill=\"#475569\"/><circle cx=\"300\" cy=\"298\" r=\"40\" fill=\"url(#@P@-luz)\"><animate attributeName=\"opacity\" values=\".15;1;.15\" dur=\"1.3s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0;.5;1\" keySplines=\".4 0 .6 1;.4 0 .6 1\"/></circle><circle cx=\"300\" cy=\"298\" r=\"16\" fill=\"#f97316\" stroke=\"#9a3412\" stroke-width=\"2\"><animate attributeName=\"fill\" values=\"#c2410c;#fdba74;#c2410c\" dur=\"1.3s\" repeatCount=\"indefinite\"/></circle><circle cx=\"300\" cy=\"298\" r=\"18\" fill=\"none\" stroke=\"#fb923c\" stroke-width=\"2\"><animate attributeName=\"r\" values=\"18;44\" dur=\"1.3s\" repeatCount=\"indefinite\"/><animate attributeName=\"opacity\" values=\".7;0\" dur=\"1.3s\" repeatCount=\"indefinite\"/></circle><g transform=\"translate(66,400)\"><path d=\"M-10,-96 Q0,-103 10,-96 L30,-8 L-30,-8 Z\" fill=\"#f97316\"/><polygon points=\"-15.45,-72 15.45,-72 20,-52 -20,-52\" fill=\"#fff\"/><polygon points=\"-23.2,-38 23.2,-38 26.8,-22 -26.8,-22\" fill=\"#fff\"/><path d=\"M-6,-94 L-2,-94 L-16,-8 L-22,-8 Z\" fill=\"#fff\" opacity=\".18\"/><rect x=\"-38\" y=\"-9\" width=\"76\" height=\"11\" rx=\"3\" fill=\"#c2410c\"/></g><g transform=\"translate(126,400)\"><path d=\"M-10,-96 Q0,-103 10,-96 L30,-8 L-30,-8 Z\" fill=\"#f97316\"/><polygon points=\"-15.45,-72 15.45,-72 20,-52 -20,-52\" fill=\"#fff\"/><polygon points=\"-23.2,-38 23.2,-38 26.8,-22 -26.8,-22\" fill=\"#fff\"/><path d=\"M-6,-94 L-2,-94 L-16,-8 L-22,-8 Z\" fill=\"#fff\" opacity=\".18\"/><rect x=\"-38\" y=\"-9\" width=\"76\" height=\"11\" rx=\"3\" fill=\"#c2410c\"/></g><g transform=\"translate(474,400)\"><path d=\"M-10,-96 Q0,-103 10,-96 L30,-8 L-30,-8 Z\" fill=\"#f97316\"/><polygon points=\"-15.45,-72 15.45,-72 20,-52 -20,-52\" fill=\"#fff\"/><polygon points=\"-23.2,-38 23.2,-38 26.8,-22 -26.8,-22\" fill=\"#fff\"/><path d=\"M-6,-94 L-2,-94 L-16,-8 L-22,-8 Z\" fill=\"#fff\" opacity=\".18\"/><rect x=\"-38\" y=\"-9\" width=\"76\" height=\"11\" rx=\"3\" fill=\"#c2410c\"/></g><g transform=\"translate(534,400)\"><path d=\"M-10,-96 Q0,-103 10,-96 L30,-8 L-30,-8 Z\" fill=\"#f97316\"/><polygon points=\"-15.45,-72 15.45,-72 20,-52 -20,-52\" fill=\"#fff\"/><polygon points=\"-23.2,-38 23.2,-38 26.8,-22 -26.8,-22\" fill=\"#fff\"/><path d=\"M-6,-94 L-2,-94 L-16,-8 L-22,-8 Z\" fill=\"#fff\" opacity=\".18\"/><rect x=\"-38\" y=\"-9\" width=\"76\" height=\"11\" rx=\"3\" fill=\"#c2410c\"/></g><line x1=\"300\" y1=\"-10\" x2=\"300\" y2=\"30\" stroke=\"#9fb3d9\" stroke-width=\"6\"/><g><circle cx=\"300\" cy=\"42\" r=\"11\" fill=\"none\" stroke=\"#e8b84b\" stroke-width=\"5\"/><path d=\"M300,53 L204,126 M300,53 L396,126\" stroke=\"#cbd5e8\" stroke-width=\"3\" fill=\"none\"/><g filter=\"url(#@P@-sombra)\"><rect x=\"150\" y=\"120\" width=\"300\" height=\"152\" rx=\"24\" fill=\"url(#@P@-franja)\" stroke=\"#0d1b3e\" stroke-width=\"4\"/><rect x=\"170\" y=\"140\" width=\"260\" height=\"112\" rx=\"14\" fill=\"url(#@P@-oro)\" stroke=\"#0d1b3e\" stroke-width=\"4\"/><rect x=\"176\" y=\"146\" width=\"248\" height=\"5\" rx=\"2.5\" fill=\"#fff\" opacity=\".35\"/></g><circle cx=\"204\" cy=\"124\" r=\"7\" fill=\"#94a3b8\" stroke=\"#0d1b3e\" stroke-width=\"2.5\"/><circle cx=\"396\" cy=\"124\" r=\"7\" fill=\"#94a3b8\" stroke=\"#0d1b3e\" stroke-width=\"2.5\"/><text x=\"300\" y=\"186\" text-anchor=\"middle\" font-family=\"'Barlow Condensed','Arial Narrow',Impact,sans-serif\" font-weight=\"700\" font-size=\"28\" fill=\"#0d1b3e\" textLength=\"132\" lengthAdjust=\"spacingAndGlyphs\">SISTEMA RCA</text><text x=\"300\" y=\"230\" text-anchor=\"middle\" font-family=\"'Barlow Condensed','Arial Narrow',Impact,sans-serif\" font-weight=\"800\" font-size=\"42\" fill=\"#0d1b3e\" textLength=\"226\" lengthAdjust=\"spacingAndGlyphs\">MANTENIMIENTO</text><animateTransform attributeName=\"transform\" type=\"rotate\" values=\"-4.5 300 42;4.5 300 42;-4.5 300 42\" keyTimes=\"0;.5;1\" dur=\"3.4s\" repeatCount=\"indefinite\" calcMode=\"spline\" keySplines=\".45 0 .55 1;.45 0 .55 1\"/></g></svg>", "engranajes": "<svg viewBox=\"0 0 600 440\" role=\"img\" aria-label=\"Tres engranajes girando y una barra de progreso\" xmlns=\"http://www.w3.org/2000/svg\"><defs><linearGradient id=\"@P@-oro\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0\" stop-color=\"#f5d37a\"/><stop offset=\"1\" stop-color=\"#e8b84b\"/></linearGradient><pattern id=\"@P@-franja\" patternUnits=\"userSpaceOnUse\" width=\"28\" height=\"28\" patternTransform=\"rotate(45)\"><rect width=\"28\" height=\"28\" fill=\"#e8b84b\"/><rect width=\"14\" height=\"28\" fill=\"#0d1b3e\"/></pattern><radialGradient id=\"@P@-luz\"><stop offset=\"0\" stop-color=\"#fb923c\" stop-opacity=\".95\"/><stop offset=\"1\" stop-color=\"#fb923c\" stop-opacity=\"0\"/></radialGradient><filter id=\"@P@-sombra\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"150%\"><feDropShadow dx=\"0\" dy=\"6\" stdDeviation=\"5\" flood-color=\"#000\" flood-opacity=\".35\"/></filter></defs><clipPath id=\"@P@-pista\"><rect x=\"150\" y=\"344\" width=\"300\" height=\"12\" rx=\"6\"/></clipPath><g filter=\"url(#@P@-sombra)\"><g transform=\"translate(222.07,195.53)\"><g><path d=\"M71.74,-6.10 L86.70,-4.09 L86.70,4.09 L71.74,6.10 A72.00,72.00 0 0 1 70.11,16.37 L70.11,16.37 L83.72,22.90 L81.20,30.68 L66.34,27.97 A72.00,72.00 0 0 1 61.63,37.23 L61.63,37.23 L72.55,47.66 L67.74,54.27 L54.45,47.10 A72.00,72.00 0 0 1 47.10,54.45 L47.10,54.45 L54.27,67.74 L47.66,72.55 L37.23,61.63 A72.00,72.00 0 0 1 27.97,66.34 L27.97,66.34 L30.68,81.20 L22.90,83.72 L16.37,70.11 A72.00,72.00 0 0 1 6.10,71.74 L6.10,71.74 L4.09,86.70 L-4.09,86.70 L-6.10,71.74 A72.00,72.00 0 0 1 -16.37,70.11 L-16.37,70.11 L-22.90,83.72 L-30.68,81.20 L-27.97,66.34 A72.00,72.00 0 0 1 -37.23,61.63 L-37.23,61.63 L-47.66,72.55 L-54.27,67.74 L-47.10,54.45 A72.00,72.00 0 0 1 -54.45,47.10 L-54.45,47.10 L-67.74,54.27 L-72.55,47.66 L-61.63,37.23 A72.00,72.00 0 0 1 -66.34,27.97 L-66.34,27.97 L-81.20,30.68 L-83.72,22.90 L-70.11,16.37 A72.00,72.00 0 0 1 -71.74,6.10 L-71.74,6.10 L-86.70,4.09 L-86.70,-4.09 L-71.74,-6.10 A72.00,72.00 0 0 1 -70.11,-16.37 L-70.11,-16.37 L-83.72,-22.90 L-81.20,-30.68 L-66.34,-27.97 A72.00,72.00 0 0 1 -61.63,-37.23 L-61.63,-37.23 L-72.55,-47.66 L-67.74,-54.27 L-54.45,-47.10 A72.00,72.00 0 0 1 -47.10,-54.45 L-47.10,-54.45 L-54.27,-67.74 L-47.66,-72.55 L-37.23,-61.63 A72.00,72.00 0 0 1 -27.97,-66.34 L-27.97,-66.34 L-30.68,-81.20 L-22.90,-83.72 L-16.37,-70.11 A72.00,72.00 0 0 1 -6.10,-71.74 L-6.10,-71.74 L-4.09,-86.70 L4.09,-86.70 L6.10,-71.74 A72.00,72.00 0 0 1 16.37,-70.11 L16.37,-70.11 L22.90,-83.72 L30.68,-81.20 L27.97,-66.34 A72.00,72.00 0 0 1 37.23,-61.63 L37.23,-61.63 L47.66,-72.55 L54.27,-67.74 L47.10,-54.45 A72.00,72.00 0 0 1 54.45,-47.10 L54.45,-47.10 L67.74,-54.27 L72.55,-47.66 L61.63,-37.23 A72.00,72.00 0 0 1 66.34,-27.97 L66.34,-27.97 L81.20,-30.68 L83.72,-22.90 L70.11,-16.37 A72.00,72.00 0 0 1 71.74,-6.10Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"36.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"44.89\" cy=\"25.92\" r=\"7.92\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"51.84\" r=\"7.92\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-44.89\" cy=\"25.92\" r=\"7.92\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-44.89\" cy=\"-25.92\" r=\"7.92\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-51.84\" r=\"7.92\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"44.89\" cy=\"-25.92\" r=\"7.92\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"12.24\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"360 0 0\" dur=\"9.00s\" repeatCount=\"indefinite\"/></g></g><g transform=\"translate(358.07,195.53)\"><g><path d=\"M-45.16,16.26 L-60.15,18.06 L-62.03,9.82 L-47.74,4.95 A48.00,48.00 0 0 1 -47.74,-4.95 L-47.74,-4.95 L-62.03,-9.82 L-60.15,-18.06 L-45.16,-16.26 A48.00,48.00 0 0 1 -40.87,-25.17 L-40.87,-25.17 L-51.62,-35.76 L-46.35,-42.37 L-33.64,-34.24 A48.00,48.00 0 0 1 -25.90,-40.41 L-25.90,-40.41 L-30.99,-54.62 L-23.38,-58.29 L-15.45,-45.45 A48.00,48.00 0 0 1 -5.80,-47.65 L-5.80,-47.65 L-4.22,-62.66 L4.22,-62.66 L5.80,-47.65 A48.00,48.00 0 0 1 15.45,-45.45 L15.45,-45.45 L23.38,-58.29 L30.99,-54.62 L25.90,-40.41 A48.00,48.00 0 0 1 33.64,-34.24 L33.64,-34.24 L46.35,-42.37 L51.62,-35.76 L40.87,-25.17 A48.00,48.00 0 0 1 45.16,-16.26 L45.16,-16.26 L60.15,-18.06 L62.03,-9.82 L47.74,-4.95 A48.00,48.00 0 0 1 47.74,4.95 L47.74,4.95 L62.03,9.82 L60.15,18.06 L45.16,16.26 A48.00,48.00 0 0 1 40.87,25.17 L40.87,25.17 L51.62,35.76 L46.35,42.37 L33.64,34.24 A48.00,48.00 0 0 1 25.90,40.41 L25.90,40.41 L30.99,54.62 L23.38,58.29 L15.45,45.45 A48.00,48.00 0 0 1 5.80,47.65 L5.80,47.65 L4.22,62.66 L-4.22,62.66 L-5.80,47.65 A48.00,48.00 0 0 1 -15.45,45.45 L-15.45,45.45 L-23.38,58.29 L-30.99,54.62 L-25.90,40.41 A48.00,48.00 0 0 1 -33.64,34.24 L-33.64,34.24 L-46.35,42.37 L-51.62,35.76 L-40.87,25.17 A48.00,48.00 0 0 1 -45.16,16.26Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"24.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"29.93\" cy=\"17.28\" r=\"5.28\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"34.56\" r=\"5.28\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-29.93\" cy=\"17.28\" r=\"5.28\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-29.93\" cy=\"-17.28\" r=\"5.28\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-34.56\" r=\"5.28\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"29.93\" cy=\"-17.28\" r=\"5.28\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"8.16\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"-360 0 0\" dur=\"6.30s\" repeatCount=\"indefinite\"/></g></g><g transform=\"translate(417.93,120.47)\"><g><path d=\"M-15.44,28.03 L-25.61,39.17 L-32.49,33.68 L-23.89,21.29 A32.00,32.00 0 0 1 -28.97,13.60 L-28.97,13.60 L-43.74,16.64 L-46.08,8.15 L-31.84,3.18 A32.00,32.00 0 0 1 -31.43,-6.02 L-31.43,-6.02 L-45.17,-12.25 L-42.07,-20.49 L-27.63,-16.14 A32.00,32.00 0 0 1 -21.88,-23.35 L-21.88,-23.35 L-29.34,-36.46 L-21.99,-41.31 L-12.87,-29.30 A32.00,32.00 0 0 1 -3.98,-31.75 L-3.98,-31.75 L-2.31,-46.74 L6.49,-46.35 L6.81,-31.27 A32.00,32.00 0 0 1 15.44,-28.03 L15.44,-28.03 L25.61,-39.17 L32.49,-33.68 L23.89,-21.29 A32.00,32.00 0 0 1 28.97,-13.60 L28.97,-13.60 L43.74,-16.64 L46.08,-8.15 L31.84,-3.18 A32.00,32.00 0 0 1 31.43,6.02 L31.43,6.02 L45.17,12.25 L42.07,20.49 L27.63,16.14 A32.00,32.00 0 0 1 21.88,23.35 L21.88,23.35 L29.34,36.46 L21.99,41.31 L12.87,29.30 A32.00,32.00 0 0 1 3.98,31.75 L3.98,31.75 L2.31,46.74 L-6.49,46.35 L-6.81,31.27 A32.00,32.00 0 0 1 -15.44,28.03Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"16.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"19.95\" cy=\"11.52\" r=\"3.52\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"23.04\" r=\"3.52\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-19.95\" cy=\"11.52\" r=\"3.52\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-19.95\" cy=\"-11.52\" r=\"3.52\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-23.04\" r=\"3.52\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"19.95\" cy=\"-11.52\" r=\"3.52\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"5.44\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"360 0 0\" dur=\"4.50s\" repeatCount=\"indefinite\"/></g></g></g><rect x=\"150\" y=\"344\" width=\"300\" height=\"12\" rx=\"6\" fill=\"#1e3a6e\" stroke=\"#2f4f94\" stroke-width=\"1.5\"/><g clip-path=\"url(#@P@-pista)\"><rect x=\"-110\" y=\"344\" width=\"110\" height=\"12\" rx=\"6\" fill=\"url(#@P@-oro)\"><animate attributeName=\"x\" values=\"110;450\" dur=\"1.9s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0;1\" keySplines=\".5 0 .5 1\"/></rect></g></svg>", "servidor": "<svg viewBox=\"0 0 600 440\" role=\"img\" aria-label=\"Servidor con luces parpadeando y engranajes girando\" xmlns=\"http://www.w3.org/2000/svg\"><defs><linearGradient id=\"@P@-oro\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0\" stop-color=\"#f5d37a\"/><stop offset=\"1\" stop-color=\"#e8b84b\"/></linearGradient><pattern id=\"@P@-franja\" patternUnits=\"userSpaceOnUse\" width=\"28\" height=\"28\" patternTransform=\"rotate(45)\"><rect width=\"28\" height=\"28\" fill=\"#e8b84b\"/><rect width=\"14\" height=\"28\" fill=\"#0d1b3e\"/></pattern><radialGradient id=\"@P@-luz\"><stop offset=\"0\" stop-color=\"#fb923c\" stop-opacity=\".95\"/><stop offset=\"1\" stop-color=\"#fb923c\" stop-opacity=\"0\"/></radialGradient><filter id=\"@P@-sombra\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"150%\"><feDropShadow dx=\"0\" dy=\"6\" stdDeviation=\"5\" flood-color=\"#000\" flood-opacity=\".35\"/></filter></defs><ellipse cx=\"300\" cy=\"404\" rx=\"250\" ry=\"12\" fill=\"#000\" opacity=\".28\"/><g filter=\"url(#@P@-sombra)\"><rect x=\"200\" y=\"70\" width=\"200\" height=\"320\" rx=\"16\" fill=\"#14275a\" stroke=\"#3b5ea8\" stroke-width=\"3\"/><rect x=\"218\" y=\"92\" width=\"164\" height=\"50\" rx=\"9\" fill=\"#1e3a6e\" stroke=\"#2f4f94\" stroke-width=\"1.5\"/><circle cx=\"236\" cy=\"106\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"0.90s\" begin=\"0.00s\" repeatCount=\"indefinite\"/></circle><circle cx=\"254\" cy=\"106\" r=\"4.5\" fill=\"#e8b84b\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.25s\" begin=\"0.41s\" repeatCount=\"indefinite\"/></circle><circle cx=\"272\" cy=\"106\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.60s\" begin=\"0.82s\" repeatCount=\"indefinite\"/></circle><rect x=\"236\" y=\"120\" width=\"128\" height=\"9\" rx=\"4.5\" fill=\"#0d1b3e\"/><rect x=\"236\" y=\"120\" width=\"20\" height=\"9\" rx=\"4.5\" fill=\"url(#@P@-oro)\"><animate attributeName=\"width\" values=\"20;118;20\" dur=\"2.20s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0;.5;1\" keySplines=\".45 0 .55 1;.45 0 .55 1\"/></rect><line x1=\"338\" y1=\"102\" x2=\"368\" y2=\"102\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><line x1=\"338\" y1=\"109\" x2=\"368\" y2=\"109\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><rect x=\"218\" y=\"154\" width=\"164\" height=\"50\" rx=\"9\" fill=\"#1e3a6e\" stroke=\"#2f4f94\" stroke-width=\"1.5\"/><circle cx=\"236\" cy=\"168\" r=\"4.5\" fill=\"#e8b84b\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.95s\" begin=\"0.27s\" repeatCount=\"indefinite\"/></circle><circle cx=\"254\" cy=\"168\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"2.30s\" begin=\"0.68s\" repeatCount=\"indefinite\"/></circle><circle cx=\"272\" cy=\"168\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"0.90s\" begin=\"1.09s\" repeatCount=\"indefinite\"/></circle><rect x=\"236\" y=\"182\" width=\"128\" height=\"9\" rx=\"4.5\" fill=\"#0d1b3e\"/><rect x=\"236\" y=\"182\" width=\"20\" height=\"9\" rx=\"4.5\" fill=\"url(#@P@-oro)\"><animate attributeName=\"width\" values=\"20;118;20\" dur=\"2.75s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0;.5;1\" keySplines=\".45 0 .55 1;.45 0 .55 1\"/></rect><line x1=\"338\" y1=\"164\" x2=\"368\" y2=\"164\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><line x1=\"338\" y1=\"171\" x2=\"368\" y2=\"171\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><rect x=\"218\" y=\"216\" width=\"164\" height=\"50\" rx=\"9\" fill=\"#1e3a6e\" stroke=\"#2f4f94\" stroke-width=\"1.5\"/><circle cx=\"236\" cy=\"230\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.25s\" begin=\"0.54s\" repeatCount=\"indefinite\"/></circle><circle cx=\"254\" cy=\"230\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.60s\" begin=\"0.95s\" repeatCount=\"indefinite\"/></circle><circle cx=\"272\" cy=\"230\" r=\"4.5\" fill=\"#e8b84b\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.95s\" begin=\"0.06s\" repeatCount=\"indefinite\"/></circle><rect x=\"236\" y=\"244\" width=\"128\" height=\"9\" rx=\"4.5\" fill=\"#0d1b3e\"/><rect x=\"236\" y=\"244\" width=\"20\" height=\"9\" rx=\"4.5\" fill=\"url(#@P@-oro)\"><animate attributeName=\"width\" values=\"20;118;20\" dur=\"3.30s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0;.5;1\" keySplines=\".45 0 .55 1;.45 0 .55 1\"/></rect><line x1=\"338\" y1=\"226\" x2=\"368\" y2=\"226\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><line x1=\"338\" y1=\"233\" x2=\"368\" y2=\"233\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><rect x=\"218\" y=\"278\" width=\"164\" height=\"50\" rx=\"9\" fill=\"#1e3a6e\" stroke=\"#2f4f94\" stroke-width=\"1.5\"/><circle cx=\"236\" cy=\"292\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"2.30s\" begin=\"0.81s\" repeatCount=\"indefinite\"/></circle><circle cx=\"254\" cy=\"292\" r=\"4.5\" fill=\"#e8b84b\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"0.90s\" begin=\"1.22s\" repeatCount=\"indefinite\"/></circle><circle cx=\"272\" cy=\"292\" r=\"4.5\" fill=\"#4ade80\"><animate attributeName=\"opacity\" values=\"1;.15;1\" dur=\"1.25s\" begin=\"0.33s\" repeatCount=\"indefinite\"/></circle><rect x=\"236\" y=\"306\" width=\"128\" height=\"9\" rx=\"4.5\" fill=\"#0d1b3e\"/><rect x=\"236\" y=\"306\" width=\"20\" height=\"9\" rx=\"4.5\" fill=\"url(#@P@-oro)\"><animate attributeName=\"width\" values=\"20;118;20\" dur=\"3.85s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0;.5;1\" keySplines=\".45 0 .55 1;.45 0 .55 1\"/></rect><line x1=\"338\" y1=\"288\" x2=\"368\" y2=\"288\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><line x1=\"338\" y1=\"295\" x2=\"368\" y2=\"295\" stroke=\"#2f4f94\" stroke-width=\"2\" stroke-linecap=\"round\"/><rect x=\"214\" y=\"352\" width=\"172\" height=\"26\" rx=\"7\" fill=\"#0d1b3e\" stroke=\"#2f4f94\" stroke-width=\"1.5\"/></g><g transform=\"translate(104,222)\"><g><circle cx=\"32.00\" cy=\"0.00\" r=\"3.00\" fill=\"#e8b84b\" opacity=\"0.15\"/><circle cx=\"22.63\" cy=\"22.63\" r=\"3.55\" fill=\"#e8b84b\" opacity=\"0.27\"/><circle cx=\"0.00\" cy=\"32.00\" r=\"4.10\" fill=\"#e8b84b\" opacity=\"0.39\"/><circle cx=\"-22.63\" cy=\"22.63\" r=\"4.65\" fill=\"#e8b84b\" opacity=\"0.51\"/><circle cx=\"-32.00\" cy=\"0.00\" r=\"5.20\" fill=\"#e8b84b\" opacity=\"0.63\"/><circle cx=\"-22.63\" cy=\"-22.63\" r=\"5.75\" fill=\"#e8b84b\" opacity=\"0.75\"/><circle cx=\"-0.00\" cy=\"-32.00\" r=\"6.30\" fill=\"#e8b84b\" opacity=\"0.87\"/><circle cx=\"22.63\" cy=\"-22.63\" r=\"6.85\" fill=\"#e8b84b\" opacity=\"0.99\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"360 0 0\" dur=\"1.4s\" repeatCount=\"indefinite\"/></g></g><g filter=\"url(#@P@-sombra)\"><g transform=\"translate(482.00,306.00)\"><g><path d=\"M41.76,-4.44 L53.01,-3.13 L53.01,3.13 L41.76,4.44 A42.00,42.00 0 0 1 40.29,11.88 L40.29,11.88 L50.17,17.40 L47.78,23.17 L36.88,20.09 A42.00,42.00 0 0 1 32.67,26.39 L32.67,26.39 L39.69,35.27 L35.27,39.69 L26.39,32.67 A42.00,42.00 0 0 1 20.09,36.88 L20.09,36.88 L23.17,47.78 L17.40,50.17 L11.88,40.29 A42.00,42.00 0 0 1 4.44,41.76 L4.44,41.76 L3.13,53.01 L-3.13,53.01 L-4.44,41.76 A42.00,42.00 0 0 1 -11.88,40.29 L-11.88,40.29 L-17.40,50.17 L-23.17,47.78 L-20.09,36.88 A42.00,42.00 0 0 1 -26.39,32.67 L-26.39,32.67 L-35.27,39.69 L-39.69,35.27 L-32.67,26.39 A42.00,42.00 0 0 1 -36.88,20.09 L-36.88,20.09 L-47.78,23.17 L-50.17,17.40 L-40.29,11.88 A42.00,42.00 0 0 1 -41.76,4.44 L-41.76,4.44 L-53.01,3.13 L-53.01,-3.13 L-41.76,-4.44 A42.00,42.00 0 0 1 -40.29,-11.88 L-40.29,-11.88 L-50.17,-17.40 L-47.78,-23.17 L-36.88,-20.09 A42.00,42.00 0 0 1 -32.67,-26.39 L-32.67,-26.39 L-39.69,-35.27 L-35.27,-39.69 L-26.39,-32.67 A42.00,42.00 0 0 1 -20.09,-36.88 L-20.09,-36.88 L-23.17,-47.78 L-17.40,-50.17 L-11.88,-40.29 A42.00,42.00 0 0 1 -4.44,-41.76 L-4.44,-41.76 L-3.13,-53.01 L3.13,-53.01 L4.44,-41.76 A42.00,42.00 0 0 1 11.88,-40.29 L11.88,-40.29 L17.40,-50.17 L23.17,-47.78 L20.09,-36.88 A42.00,42.00 0 0 1 26.39,-32.67 L26.39,-32.67 L35.27,-39.69 L39.69,-35.27 L32.67,-26.39 A42.00,42.00 0 0 1 36.88,-20.09 L36.88,-20.09 L47.78,-23.17 L50.17,-17.40 L40.29,-11.88 A42.00,42.00 0 0 1 41.76,-4.44Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"21.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"26.19\" cy=\"15.12\" r=\"4.62\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"30.24\" r=\"4.62\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-26.19\" cy=\"15.12\" r=\"4.62\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-26.19\" cy=\"-15.12\" r=\"4.62\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-30.24\" r=\"4.62\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"26.19\" cy=\"-15.12\" r=\"4.62\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"7.14\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"360 0 0\" dur=\"10.00s\" repeatCount=\"indefinite\"/></g></g><g transform=\"translate(452.15,233.94)\"><g><path d=\"M18.44,15.36 L25.21,24.43 L20.18,28.72 L12.28,20.62 A24.00,24.00 0 0 1 5.90,23.26 L5.90,23.26 L6.03,34.58 L-0.55,35.10 L-2.18,23.90 A24.00,24.00 0 0 1 -8.91,22.29 L-8.91,22.29 L-15.44,31.52 L-21.07,28.07 L-15.81,18.05 A24.00,24.00 0 0 1 -20.30,12.80 L-20.30,12.80 L-31.02,16.42 L-33.55,10.32 L-23.41,5.31 A24.00,24.00 0 0 1 -23.95,-1.58 L-23.95,-1.58 L-34.75,-4.95 L-33.21,-11.37 L-22.06,-9.46 A24.00,24.00 0 0 1 -18.44,-15.36 L-18.44,-15.36 L-25.21,-24.43 L-20.18,-28.72 L-12.28,-20.62 A24.00,24.00 0 0 1 -5.90,-23.26 L-5.90,-23.26 L-6.03,-34.58 L0.55,-35.10 L2.18,-23.90 A24.00,24.00 0 0 1 8.91,-22.29 L8.91,-22.29 L15.44,-31.52 L21.07,-28.07 L15.81,-18.05 A24.00,24.00 0 0 1 20.30,-12.80 L20.30,-12.80 L31.02,-16.42 L33.55,-10.32 L23.41,-5.31 A24.00,24.00 0 0 1 23.95,1.58 L23.95,1.58 L34.75,4.95 L33.21,11.37 L22.06,9.46 A24.00,24.00 0 0 1 18.44,15.36Z\" fill=\"url(#@P@-oro)\" stroke=\"#b8901f\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/><circle r=\"12.00\" fill=\"#1a2f5e\" stroke=\"#b8901f\" stroke-width=\"1.4\"/><circle cx=\"14.96\" cy=\"8.64\" r=\"2.64\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"0.00\" cy=\"17.28\" r=\"2.64\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-14.96\" cy=\"8.64\" r=\"2.64\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-14.96\" cy=\"-8.64\" r=\"2.64\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"-0.00\" cy=\"-17.28\" r=\"2.64\" fill=\"#0d1b3e\" opacity=\".85\"/><circle cx=\"14.96\" cy=\"-8.64\" r=\"2.64\" fill=\"#0d1b3e\" opacity=\".85\"/><circle r=\"4.08\" fill=\"#e8b84b\"/><animateTransform attributeName=\"transform\" type=\"rotate\" from=\"0 0 0\" to=\"-360 0 0\" dur=\"6.25s\" repeatCount=\"indefinite\"/></g></g></g></svg>"};
+
+/* ══════════════════════════════════════════════════════════════
+   HORA DE REFERENCIA DEL SERVIDOR
+   El cronómetro y la reapertura automática NO usan el reloj del equipo.
+   Al iniciar sesión se le pide la hora a Firestore (serverTimestamp),
+   se calcula la diferencia y, desde ahí, se avanza con el cronómetro
+   interno del navegador (performance.now), que no se altera si alguien
+   cambia la fecha u hora de su computador o celular.
+   Si Firestore no responde (o falta la regla sistema_reloj), se usa el
+   reloj del equipo como respaldo y el panel del administrador lo avisa.
+══════════════════════════════════════════════════════════════ */
+const _reloj = { servidorMs: null, perf: 0, dateBase: 0, fuente: 'equipo', difMs: 0, sincronizando: null, iniciado: false };
+
+function ahoraServidor() {
+  if (_reloj.servidorMs == null) return Date.now();
+  return _reloj.servidorMs + (performance.now() - _reloj.perf);
+}
+
+// Si el reloj del equipo y el cronómetro interno se separan, hubo un cambio de hora o el equipo estuvo suspendido
+function relojDesfasado() {
+  if (_reloj.servidorMs == null) return false;
+  return Math.abs((Date.now() - _reloj.dateBase) - (performance.now() - _reloj.perf)) > 3000;
+}
+
+async function sincronizarRelojServidor() {
+  if (_reloj.sincronizando) return _reloj.sincronizando;
+  _reloj.sincronizando = (async () => {
+    try {
+      if (!usuario || !window._fb || !window._fb.serverTimestamp) throw new Error('sin sesión o sin serverTimestamp');
+      const ref = window._fb.doc(db, 'sistema_reloj', usuario.uid);
+      const t0 = performance.now();
+      await window._fb.setDoc(ref, { t: window._fb.serverTimestamp() });
+      const t1 = performance.now();
+      const snap = await window._fb.getDoc(ref);
+      const ts = snap.exists() ? snap.data().t : null;
+      if (!ts || typeof ts.toMillis !== 'function') throw new Error('el servidor no devolvió la hora');
+      const instanteEscritura = (t0 + t1) / 2;            // la escritura se confirmó, en promedio, a mitad de camino
+      _reloj.servidorMs = ts.toMillis();
+      _reloj.perf = instanteEscritura;
+      _reloj.dateBase = Date.now() - (performance.now() - instanteEscritura);
+      _reloj.difMs = _reloj.servidorMs - _reloj.dateBase;  // servidor − equipo
+      _reloj.fuente = 'servidor';
+    } catch (e) {
+      console.warn('No se pudo sincronizar la hora con el servidor:', e.message);
+      if (_reloj.servidorMs == null) _reloj.fuente = 'equipo';
+    } finally {
+      _reloj.sincronizando = null;
+      pintarEstadoRelojAdmin();
+    }
+  })();
+  return _reloj.sincronizando;
+}
+
+function iniciarSincronizacionReloj() {
+  if (_reloj.iniciado) return;
+  _reloj.iniciado = true;
+  setInterval(() => { if (usuario) sincronizarRelojServidor(); }, 10 * 60 * 1000);
+  setInterval(() => { if (usuario && relojDesfasado()) sincronizarRelojServidor(); }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && usuario) sincronizarRelojServidor();
+  });
+}
+
+function pintarEstadoRelojAdmin() {
+  const el = $('mant-reloj-estado');
+  if (!el) return;
+  if (_reloj.fuente === 'servidor') {
+    const dif = Math.round(_reloj.difMs / 1000);
+    el.style.color = '';
+    el.textContent = '🕐 Hora del servidor sincronizada' +
+      (Math.abs(dif) >= 2 ? ` · este equipo ${dif > 0 ? 'va atrasado' : 'va adelantado'} ${Math.abs(dif)} s` : ' · este equipo está al día');
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = '⚠️ No se pudo obtener la hora del servidor: la reapertura automática usaría el reloj de cada equipo. ' +
+      'Revise que la regla "sistema_reloj" esté publicada en Firestore.';
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MODO MANTENIMIENTO — tiempo real
    El admin nunca ve la pantalla de mantenimiento, aunque esté activado (así
    puede entrar a probar los cambios). Todos los demás la ven de inmediato,
-   sin recargar, apenas el documento cambia. */
+   sin recargar, apenas el documento cambia.
+   Campos del documento sistema/mantenimiento:
+     activo, mensaje, correosExentos[], animacion ('letrero'|'engranajes'|'servidor'),
+     finEnMs (instante exacto de reapertura automática, o null)
+══════════════════════════════════════════════════════════════ */
 let unsubMantenimiento = null;
+let mantData = null;            // último documento recibido
+let mantTimerFin = null;        // aviso al llegar la hora de reapertura
+let mantTimerCrono = null;      // cuenta regresiva de la pantalla
+let mantAnimPintada = null;     // animación que ya está en pantalla (para no reiniciarla)
+let mantExentos = [];           // lista de trabajo del panel
+let mantExentosSucio = false;   // true = hay cambios sin guardar en la lista
+
+const MANT_ANIMACIONES = [
+  { clave: 'letrero',    nombre: 'Letrero de obra' },
+  { clave: 'engranajes', nombre: 'Engranajes' },
+  { clave: 'servidor',   nombre: 'Servidor' }
+];
+
+const mantEsc = t => String(t == null ? '' : t)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Correos que el administrador permite entrar aunque el mantenimiento esté activo
 function correoExentoDeMantenimiento(data) {
@@ -434,103 +537,411 @@ function correoExentoDeMantenimiento(data) {
   return !!mio && lista.map(c => String(c).toLowerCase()).includes(mio);
 }
 
-function iniciarListenerMantenimiento() {
-  if (unsubMantenimiento) unsubMantenimiento();
-  const ref = window._fb.doc(db, 'sistema', 'mantenimiento');
-  unsubMantenimiento = window._fb.onSnapshot(ref, (snap) => {
-    const data = snap.exists() ? snap.data() : null;
-    const activo = !!(data && data.activo);
+// ¿Sigue vigente? Activo y, si tiene hora de reapertura, que esa hora no haya llegado (según el servidor)
+function mantenimientoVigente(data) {
+  if (!data || !data.activo) return false;
+  if (typeof data.finEnMs === 'number' && ahoraServidor() >= data.finEnMs) return false;
+  return true;
+}
 
-    if (activo && !esAdmin() && !correoExentoDeMantenimiento(data)) {
+/* Hora de Ecuador (UTC-5 fija, sin horario de verano): no depende de la zona horaria del equipo */
+const MANT_UTC_MENOS_5 = 5 * 3600 * 1000;
+function mantHoraEcuador(ms) {
+  const d = new Date(ms - MANT_UTC_MENOS_5);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+function mantDiaEcuador(ms) {
+  const d = new Date(ms - MANT_UTC_MENOS_5);
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+// Próxima vez que el reloj de Ecuador marque HH:MM (siempre dentro de las próximas 24 horas)
+function mantCalcularFin(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return null;
+  const h = +m[1], mi = +m[2];
+  if (h > 23 || mi > 59) return null;
+  const ahora = ahoraServidor();
+  const e = new Date(ahora - MANT_UTC_MENOS_5);
+  let fin = Date.UTC(e.getUTCFullYear(), e.getUTCMonth(), e.getUTCDate(), h, mi) + MANT_UTC_MENOS_5;
+  if (fin <= ahora + 30000) fin += 24 * 3600 * 1000;
+  return fin;
+}
+
+function mantTextoDuracion(ms) {
+  const min = Math.max(1, Math.round(ms / 60000));
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), r = min % 60;
+  return r ? `${h} h ${r} min` : `${h} h`;
+}
+
+function formatoCuentaRegresiva(ms) {
+  const t = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const dos = n => String(n).padStart(2, '0');
+  return h > 0 ? `${dos(h)}:${dos(m)}:${dos(s)}` : `${dos(m)}:${dos(s)}`;
+}
+
+/* ── Animaciones ── */
+function svgMantenimiento(clave, prefijo) {
+  return (MANT_SVG[clave] || MANT_SVG.letrero).replace(/@P@/g, prefijo);
+}
+
+function pintarAnimacionMantenimiento(clave) {
+  const cont = $('pm-animacion');
+  if (!cont) return;
+  const k = MANT_SVG[clave] ? clave : 'letrero';
+  if (mantAnimPintada === k && cont.firstChild) return;
+  cont.innerHTML = svgMantenimiento(k, 'pm');
+  mantAnimPintada = k;
+  quietarAnimacionSiCorresponde(cont);
+}
+
+function quietarAnimacionSiCorresponde(raiz) {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    raiz.querySelectorAll('svg').forEach(s => { if (s.pauseAnimations) s.pauseAnimations(); });
+  }
+}
+
+function construirOpcionesAnimacionMantenimiento() {
+  const cont = $('mant-anim-opciones');
+  if (!cont || cont.dataset.listo) return;
+  cont.innerHTML = MANT_ANIMACIONES.map((a, i) => `
+    <label class="mant-anim-op">
+      <input type="radio" name="mant-anim" value="${a.clave}" ${i === 0 ? 'checked' : ''}>
+      <span class="mant-anim-thumb">${svgMantenimiento(a.clave, 'mt' + i)}</span>
+      <span class="mant-anim-nombre">${a.nombre}</span>
+    </label>`).join('');
+  cont.dataset.listo = '1';
+  cont.addEventListener('change', mantMarcarSucio);
+  quietarAnimacionSiCorresponde(cont);
+}
+
+function mantElegirAnimacionEnPanel(clave) {
+  const r = document.querySelector(`input[name="mant-anim"][value="${clave}"]`);
+  if (r) r.checked = true;
+}
+
+/* ── Cronómetro de la pantalla ── */
+function tickCronometroMantenimiento() {
+  const data = mantData;
+  const el = $('pm-crono');
+  if (!el || !data || typeof data.finEnMs !== 'number') return;
+  const resto = data.finEnMs - ahoraServidor();
+  if (resto <= 0) { renderMantenimiento(); return; }
+  el.textContent = formatoCuentaRegresiva(resto);
+}
+
+function detenerTimersMantenimiento() {
+  if (mantTimerFin)   { clearTimeout(mantTimerFin);   mantTimerFin = null; }
+  if (mantTimerCrono) { clearInterval(mantTimerCrono); mantTimerCrono = null; }
+}
+
+/* ── Pintado general (pantalla de los usuarios + panel del administrador) ── */
+function renderMantenimiento() {
+  const data = mantData;
+  const vigente = mantenimientoVigente(data);
+  const vencido = !!(data && data.activo) && !vigente;
+  const tieneFin = !!(data && typeof data.finEnMs === 'number');
+  detenerTimersMantenimiento();
+
+  // 1) Pantalla de mantenimiento para quien NO es admin ni está exento
+  const pantalla = $('pantalla-mantenimiento');
+  if (pantalla) {
+    if (vigente && !esAdmin() && !correoExentoDeMantenimiento(data)) {
       if ($('pantalla-mantenimiento-mensaje')) {
         $('pantalla-mantenimiento-mensaje').textContent =
           (data.mensaje && data.mensaje.trim())
             ? data.mensaje.trim()
             : 'Estamos aplicando una mejora al sistema. Vuelva a intentarlo en unos minutos.';
       }
+      pintarAnimacionMantenimiento(data.animacion);
+      const wrap = $('pm-crono-wrap');
+      if (wrap) {
+        wrap.style.display = tieneFin ? 'block' : 'none';
+        if ($('pm-crono-hora') && tieneFin) $('pm-crono-hora').textContent = `El sistema se abrirá solo a las ${mantHoraEcuador(data.finEnMs)} (hora de Ecuador)`;
+      }
       show('pantalla-mantenimiento');
-      $('pantalla-mantenimiento').style.display = 'flex';
+      pantalla.style.display = 'flex';
+      if (tieneFin) {
+        tickCronometroMantenimiento();
+        mantTimerCrono = setInterval(tickCronometroMantenimiento, 500);
+      }
     } else {
       hide('pantalla-mantenimiento');
     }
+  }
 
-    // Aviso discreto para el admin, para que no se olvide de desactivarlo
-    const avisoAdmin = $('mantenimiento-info-flotante');
-    if (esAdmin()) {
-      if (activo) {
-        if (!avisoAdmin) {
-          const div = document.createElement('div');
-          div.id = 'mantenimiento-info-flotante';
-          div.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9998;background:#c9a227;color:#0d1b3e;font-weight:700;font-size:12px;padding:10px 16px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);';
-          div.textContent = '🚧 Modo Mantenimiento ACTIVO — los demás usuarios no pueden entrar';
-          document.body.appendChild(div);
-        }
-      } else if (avisoAdmin) {
-        avisoAdmin.remove();
+  // 2) Aviso discreto para el admin, para que no se olvide de desactivarlo
+  const avisoAdmin = $('mantenimiento-info-flotante');
+  if (esAdmin()) {
+    if (vigente) {
+      if (!avisoAdmin) {
+        const div = document.createElement('div');
+        div.id = 'mantenimiento-info-flotante';
+        div.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9998;background:#c9a227;color:#0d1b3e;font-weight:700;font-size:12px;padding:10px 16px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);';
+        document.body.appendChild(div);
       }
+      const av = $('mantenimiento-info-flotante');
+      av.textContent = '🚧 Modo Mantenimiento ACTIVO — los demás usuarios no pueden entrar' +
+        (tieneFin ? ` · se reabre solo a las ${mantHoraEcuador(data.finEnMs)}` : '');
+    } else if (avisoAdmin) {
+      avisoAdmin.remove();
     }
+  }
 
-    // Refleja el estado en el interruptor del panel, si está a la vista
-    if ($('mantenimiento-activo')) {
-      $('mantenimiento-activo').checked = activo;
-      const nPerm = (data && Array.isArray(data.correosExentos)) ? data.correosExentos.length : 0;
-      $('mantenimiento-estado-texto').textContent = activo
-        ? (nPerm
-            ? `Activado — el sistema está bloqueado para todos menos usted y ${nPerm} ${nPerm === 1 ? 'correo permitido' : 'correos permitidos'}`
-            : 'Activado — el sistema está bloqueado para todos menos usted')
-        : 'Desactivado — el sistema funciona con normalidad';
-      $('mantenimiento-estado-texto').style.color = activo ? 'var(--red)' : '';
+  // 3) Panel de Configuración (si está en pantalla)
+  construirOpcionesAnimacionMantenimiento();
+  if ($('mantenimiento-activo')) {
+    // Si el administrador ya tocó algo del formulario y aún no guarda, no se le pisa lo que eligió
+    const sucio = !!($('mant-card') && $('mant-card').dataset.sucio === '1');
+    if (!sucio) $('mantenimiento-activo').checked = vigente;
+    const nPerm = (data && Array.isArray(data.correosExentos)) ? data.correosExentos.length : 0;
+    let txt;
+    if (vigente) {
+      txt = nPerm
+        ? `Activado — el sistema está bloqueado para todos menos usted y ${nPerm} ${nPerm === 1 ? 'correo permitido' : 'correos permitidos'}`
+        : 'Activado — el sistema está bloqueado para todos menos usted';
+      if (tieneFin) txt += ` · se reabre solo a las ${mantHoraEcuador(data.finEnMs)}`;
+    } else if (vencido) {
+      txt = `Finalizó automáticamente a las ${mantHoraEcuador(data.finEnMs)} — el sistema ya está abierto para todos`;
+    } else {
+      txt = 'Desactivado — el sistema funciona con normalidad';
+    }
+    $('mantenimiento-estado-texto').textContent = txt;
+    $('mantenimiento-estado-texto').style.color = vigente ? 'var(--red)' : '';
+
+    if (!sucio) {
       if ($('mantenimiento-mensaje') && data && data.mensaje && !$('mantenimiento-mensaje').dataset.editando) {
         $('mantenimiento-mensaje').value = data.mensaje;
       }
-      const inpEx = $('mantenimiento-correos-exentos');
-      if (inpEx && data && !inpEx.dataset.editando) {
-        inpEx.value = Array.isArray(data.correosExentos) ? data.correosExentos.join(', ') : '';
+      if (data && data.animacion) mantElegirAnimacionEnPanel(data.animacion);
+      const chk = $('mant-auto');
+      if (chk) {
+        chk.checked = vigente && tieneFin;
+        if ($('mant-auto-hora') && vigente && tieneFin) $('mant-auto-hora').value = mantHoraEcuador(data.finEnMs);
+        mantAutoCambio();
       }
+    } else {
+      mantAutoPrevia();
     }
+    if (!mantExentosSucio) {
+      mantExentos = (data && Array.isArray(data.correosExentos)) ? data.correosExentos.map(c => String(c).toLowerCase()) : [];
+      pintarListaExentos();
+    }
+    pintarEstadoRelojAdmin();
+  }
+
+  // 4) Aviso exacto al llegar la hora de reapertura
+  if (vigente && tieneFin) {
+    const falta = Math.max(0, data.finEnMs - ahoraServidor());
+    mantTimerFin = setTimeout(renderMantenimiento, Math.min(falta + 60, 2147000000));
+  }
+}
+
+function iniciarListenerMantenimiento() {
+  if (unsubMantenimiento) unsubMantenimiento();
+  const ref = window._fb.doc(db, 'sistema', 'mantenimiento');
+  unsubMantenimiento = window._fb.onSnapshot(ref, (snap) => {
+    mantData = snap.exists() ? snap.data() : null;
+    renderMantenimiento();
   }, (e) => console.warn('Listener de mantenimiento interrumpido:', e.message));
 }
 
+// Marca que el formulario principal tiene cambios sin guardar
+function mantMarcarSucio() {
+  const c = $('mant-card');
+  if (c) c.dataset.sucio = '1';
+}
+
+/* ── Opción: reabrir automáticamente a una hora ── */
+function mantAutoCambio() {
+  const chk = $('mant-auto'), campos = $('mant-auto-campos');
+  if (!chk || !campos) return;
+  campos.style.display = chk.checked ? 'block' : 'none';
+  mantAutoPrevia();
+}
+
+function mantAutoPrevia() {
+  const el = $('mant-auto-previa'), inp = $('mant-auto-hora');
+  if (!el || !inp) return;
+  if (!inp.value) { el.textContent = 'Elija la hora a la que el sistema se abrirá solo.'; return; }
+  const fin = mantCalcularFin(inp.value);
+  if (!fin) { el.textContent = 'La hora no es válida.'; return; }
+  const ahora = ahoraServidor();
+  const cuando = mantDiaEcuador(fin) === mantDiaEcuador(ahora) ? 'hoy' : 'mañana';
+  el.textContent = `Se abrirá ${cuando} a las ${mantHoraEcuador(fin)} (hora de Ecuador), dentro de ${mantTextoDuracion(fin - ahora)}.`;
+}
+
+function mantAutoAtajo(minutos) {
+  const inp = $('mant-auto-hora');
+  if (!inp) return;
+  const objetivo = Math.ceil((ahoraServidor() + minutos * 60000) / 60000) * 60000;
+  inp.value = mantHoraEcuador(objetivo);
+  mantAutoPrevia();
+}
+
+/* ── Lista de correos que pueden entrar durante el mantenimiento ── */
+const MANT_CORREO_VALIDO = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+
+function pintarListaExentos() {
+  const cont = $('mant-exentos-lista');
+  if (!cont) return;
+  cont.innerHTML = mantExentos.length
+    ? mantExentos.map((c, i) => `
+        <div class="mant-ex-item">
+          <span class="mant-ex-correo">${mantEsc(c)}</span>
+          <button type="button" class="mant-ex-btn" onclick="editarCorreoExento(${i})">✏️ Editar</button>
+          <button type="button" class="mant-ex-btn mant-ex-quitar" onclick="quitarCorreoExento(${i})">✕ Quitar</button>
+        </div>`).join('')
+    : '<div class="mant-ex-vacio">Ningún usuario permitido. Solo usted podrá entrar mientras el mantenimiento esté activo.</div>';
+  const btn = $('mant-exentos-guardar'), est = $('mant-exentos-estado');
+  if (btn) btn.disabled = !mantExentosSucio;
+  if (est) {
+    est.textContent = mantExentosSucio ? 'Hay cambios sin guardar en la lista.' : 'La lista está guardada.';
+    est.style.color = mantExentosSucio ? 'var(--red)' : 'var(--txt2)';
+  }
+}
+
+// Mientras escribe: no deja teclear coma, punto y coma ni espacio (un correo a la vez)
+function onTeclaCorreoExento(ev) {
+  if (ev.key === 'Enter') { ev.preventDefault(); agregarCorreoExento(); return; }
+  if (ev.key === ',' || ev.key === ';' || ev.key === ' ') {
+    ev.preventDefault();
+    toast('Escriba un solo correo, sin comas. Pulse "Agregar" para añadirlo a la lista.', 'err');
+  }
+}
+
+function agregarCorreoExento() {
+  const inp = $('mant-correo-nuevo');
+  if (!inp) return;
+  const valor = inp.value.trim().toLowerCase();
+  if (!valor) { toast('Escriba el correo del usuario.', 'err'); inp.focus(); return; }
+  if (/[,;\s]/.test(valor)) { toast('Escriba un solo correo, sin comas ni espacios. Se agrega de uno en uno.', 'err'); inp.focus(); return; }
+  if (!MANT_CORREO_VALIDO.test(valor)) { toast('Ese correo no es válido. Revíselo (ej.: nombre@gmail.com).', 'err'); inp.focus(); return; }
+  if (mantExentos.includes(valor)) { toast('Ese correo ya está en la lista.', 'err'); inp.value = ''; return; }
+  mantExentos.push(valor);
+  mantExentosSucio = true;
+  inp.value = '';
+  pintarListaExentos();
+  inp.focus();
+}
+
+function quitarCorreoExento(i) {
+  if (i < 0 || i >= mantExentos.length) return;
+  mantExentos.splice(i, 1);
+  mantExentosSucio = true;
+  pintarListaExentos();
+}
+
+// Editar = sacarlo de la lista y dejarlo en el campo para corregirlo y volver a agregarlo
+function editarCorreoExento(i) {
+  if (i < 0 || i >= mantExentos.length) return;
+  const inp = $('mant-correo-nuevo');
+  if (inp && inp.value.trim()) { toast('Primero agregue o borre el correo que está escribiendo.', 'err'); inp.focus(); return; }
+  const c = mantExentos.splice(i, 1)[0];
+  mantExentosSucio = true;
+  if (inp) { inp.value = c; inp.focus(); }
+  pintarListaExentos();
+}
+
+async function guardarCorreosExentos() {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+  const inp = $('mant-correo-nuevo');
+  if (inp && inp.value.trim()) { toast('Tiene un correo escrito sin agregar. Pulse "Agregar" o bórrelo antes de guardar.', 'err'); inp.focus(); return; }
+  const btn = $('mant-exentos-guardar');
+  if (btn) btn.disabled = true;
+  const correosExentos = [...new Set(mantExentos)];
+  try {
+    await window._fb.setDoc(window._fb.doc(db, 'sistema', 'mantenimiento'), {
+      correosExentos, exentosActualizadoPor: usuario.email, exentosActualizadoEn: new Date()
+    }, { merge: true });
+    mantExentosSucio = false;
+    await registrarEnAuditoria(
+      'actualizar_correos_mantenimiento', null, usuario.email, null, null, { correosExentos },
+      `Lista de correos permitidos en mantenimiento actualizada por ${usuario.email} (${correosExentos.length})`
+    );
+    pintarListaExentos();
+    toast('✅ Lista guardada. Los cambios rigen de inmediato, sin tocar el mantenimiento.', 'ok');
+  } catch (e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+    pintarListaExentos();
+  }
+}
+
+/* ── Guardar el modo mantenimiento (interruptor, mensaje, animación y reapertura) ── */
 async function guardarModoMantenimiento() {
   if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
   const activo = $('mantenimiento-activo').checked;
   const mensaje = $('mantenimiento-mensaje').value.trim();
-  const inpEx = $('mantenimiento-correos-exentos');
-  const correosExentos = inpEx
-    ? [...new Set(inpEx.value.split(/[\s,;]+/).map(c => c.trim().toLowerCase()).filter(c => c.includes('@')))]
-    : [];
+  const sel = document.querySelector('input[name="mant-anim"]:checked');
+  const animacion = sel ? sel.value : 'letrero';
+  const quiereAuto = !!($('mant-auto') && $('mant-auto').checked);
+
+  let finEnMs = null;
+  if (activo && quiereAuto) {
+    const hhmm = $('mant-auto-hora') ? $('mant-auto-hora').value : '';
+    if (!hhmm) { toast('Elija la hora de reapertura o desmarque la reapertura automática.', 'err'); return; }
+    finEnMs = mantCalcularFin(hhmm);
+    if (!finEnMs) { toast('La hora de reapertura no es válida.', 'err'); return; }
+  }
 
   if (activo) {
-    const ok = await confirmarAccion(
-      'Esto va a bloquear el acceso a TODOS los secretarios y al supervisor de inmediato — solo usted' +
-      (correosExentos.length
-        ? ` y ${correosExentos.length === 1 ? 'el correo permitido' : 'los ' + correosExentos.length + ' correos permitidos'} (${correosExentos.join(', ')})`
+    await sincronizarRelojServidor();
+    if (finEnMs) finEnMs = mantCalcularFin($('mant-auto-hora').value);   // recalcular con la hora ya sincronizada
+    const guardados = (mantData && Array.isArray(mantData.correosExentos)) ? mantData.correosExentos : [];
+    let msg = 'Esto va a bloquear el acceso a TODOS los secretarios y al supervisor de inmediato — solo usted' +
+      (guardados.length
+        ? ` y ${guardados.length === 1 ? 'el correo permitido' : 'los ' + guardados.length + ' correos permitidos'} (${guardados.join(', ')})`
         : '') +
-      ' van a poder entrar. ¿Confirma que quiere activar el Modo Mantenimiento?',
-      'Activar Modo Mantenimiento'
-    );
+      ' van a poder entrar.';
+    if (finEnMs) {
+      const cuando = mantDiaEcuador(finEnMs) === mantDiaEcuador(ahoraServidor()) ? 'hoy' : 'mañana';
+      msg += ` El sistema se abrirá solo ${cuando} a las ${mantHoraEcuador(finEnMs)} (hora de Ecuador), dentro de ${mantTextoDuracion(finEnMs - ahoraServidor())}.`;
+    }
+    if (finEnMs && _reloj.fuente !== 'servidor') msg += ' ATENCIÓN: no se pudo obtener la hora del servidor, así que la reapertura dependerá del reloj de cada equipo.';
+    if (mantExentosSucio) msg += ' Tenga en cuenta que la lista de correos permitidos tiene cambios SIN guardar: no se aplicarán hasta que pulse "Guardar cambios de la lista".';
+    msg += ' ¿Confirma que quiere activar el Modo Mantenimiento?';
+    const ok = await confirmarAccion(msg, 'Activar Modo Mantenimiento');
     if (!ok) { $('mantenimiento-activo').checked = false; return; }
   }
 
+  if ($('mant-card')) delete $('mant-card').dataset.sucio;
   try {
     await window._fb.setDoc(window._fb.doc(db, 'sistema', 'mantenimiento'), {
-      activo, mensaje, correosExentos,
+      activo, mensaje, animacion,
+      reaperturaAuto: !!finEnMs,
+      finEnMs: finEnMs || null,
+      relojFuente: _reloj.fuente,
       activadoPor: usuario.email,
       fecha: new Date()
     }, { merge: true });
 
     await registrarEnAuditoria(
       activo ? 'activar_mantenimiento' : 'desactivar_mantenimiento',
-      null, usuario.email, null, null, { mensaje, correosExentos },
-      `Modo Mantenimiento ${activo ? 'ACTIVADO' : 'desactivado'} por ${usuario.email}`
+      null, usuario.email, null, null, { mensaje, animacion, finEnMs: finEnMs || null },
+      `Modo Mantenimiento ${activo ? 'ACTIVADO' : 'desactivado'} por ${usuario.email}` +
+      (finEnMs ? ` · reapertura automática a las ${mantHoraEcuador(finEnMs)}` : '')
     );
 
     toast(activo ? '🚧 Modo Mantenimiento activado' : '✅ Modo Mantenimiento desactivado', 'ok');
   } catch(e) {
     console.error(e);
+    mantMarcarSucio();
     toast('❌ Error: ' + e.message, 'err');
   }
 }
+
+window.mantMarcarSucio       = mantMarcarSucio;
+window.logout                = logout;   // el botón "Salir" de la pantalla de mantenimiento lo llama desde el HTML
+window.guardarCorreosExentos = guardarCorreosExentos;
+window.agregarCorreoExento   = agregarCorreoExento;
+window.quitarCorreoExento    = quitarCorreoExento;
+window.editarCorreoExento    = editarCorreoExento;
+window.onTeclaCorreoExento   = onTeclaCorreoExento;
+window.mantAutoCambio        = mantAutoCambio;
+window.mantAutoPrevia        = mantAutoPrevia;
+window.mantAutoAtajo         = mantAutoAtajo;
 
 // Oculta/deshabilita cualquier elemento con data-permiso="clave" si el usuario no la tiene
 function aplicarPermisosBotones() {
@@ -561,6 +972,7 @@ function ir(v) {
   if (v==='vista-novedades') $('nb-novedades')?.classList.add('active');
   if (v==='vista-admin') $('nb-admin')?.classList.add('active');
   if (v==='vista-reportes') $('nb-reportes')?.classList.add('active');
+  if (v==='vista-envios') infActualizarTarjeta();
   vistaActual = v;
 }
 
@@ -10647,6 +11059,459 @@ window.restaurarConfigCierrePorDefecto = restaurarConfigCierrePorDefecto;
 window.actualizarResumenConfigCierre = actualizarResumenConfigCierre;
 window.actualizarResumenModoLlenado = actualizarResumenModoLlenado;
 window.alternarDetalleCierre        = alternarDetalleCierre;
+
+/* ══════════════════════════════════════════════════════════════
+   INFORME DE ENTREGA / ATRASO — dibujo del PDF (función pura)
+   d    = { titulo, lugar, fechaTexto, asunto, mesTexto, areaTexto,
+            para:{grado,codigo,nombre,cargo}, firmantes:[{grado,codigo,nombre,cargo}] }
+   imgs = { escudo: dataURL PNG, logo: dataURL PNG }
+══════════════════════════════════════════════════════════════ */
+function infTitulo(txt) {
+  const chicas = ['de', 'del', 'la', 'las', 'los', 'y', 'e'];
+  return String(txt || '').toLowerCase().split(/\s+/).filter(Boolean).map((p, i) => {
+    if (i > 0 && chicas.includes(p)) return p;
+    if (p === 'transito') return 'Tránsito';
+    return p.charAt(0).toUpperCase() + p.slice(1);
+  }).join(' ');
+}
+
+function infJustificar(doc, texto, x, y, ancho, paso) {
+  const lineas = doc.splitTextToSize(texto, ancho);
+  lineas.forEach((ln, i) => {
+    const esUltima = i === lineas.length - 1;
+    const palabras = ln.trim().split(/\s+/);
+    if (esUltima || palabras.length < 2) {
+      doc.text(ln.trim(), x, y);
+    } else {
+      const sumaPalabras = palabras.reduce((s, p) => s + doc.getTextWidth(p), 0);
+      const hueco = (ancho - sumaPalabras) / (palabras.length - 1);
+      let cx = x;
+      palabras.forEach(p => { doc.text(p, cx, y); cx += doc.getTextWidth(p) + hueco; });
+    }
+    y += paso;
+  });
+  return y;
+}
+
+function infConstruirPdf(jsPDF, d, imgs) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const AZUL = [38, 46, 125];
+  const GRIS = [125, 125, 125];
+  const LM = 24.8, ANCHO = 167, PASO = 5.2;
+  const nombreConGrado = (p, conCodigo) =>
+    (p.grado ? infTitulo(p.grado) + ': ' : '') + (conCodigo && p.codigo ? p.codigo + ' ' : '') + infTitulo(p.nombre);
+
+  /* — Encabezado — */
+  doc.setFillColor(...AZUL);
+  doc.roundedRect(112, -8, 110, 17, 4, 4, 'F');
+  if (imgs && imgs.escudo) doc.addImage(imgs.escudo, 'PNG', 9, 6, 18.1, 20, undefined, 'FAST');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5); doc.setTextColor(...AZUL);
+  doc.text('REPÚBLICA', 29.5, 15.3);
+  doc.text('DEL ECUADOR', 29.5, 20.3);
+  doc.setTextColor(0, 0, 0);
+
+  /* — Título — */
+  doc.setFont('times', 'bold'); doc.setFontSize(17);
+  doc.text(d.titulo, 105, 26.5, { align: 'center' });
+  const wT = doc.getTextWidth(d.titulo);
+  doc.setLineWidth(0.4); doc.line(105 - wT / 2, 27.6, 105 + wT / 2, 27.6);
+
+  doc.setFontSize(12);
+  const VX = 41;                         // columna donde empiezan los valores
+  const anchoVal = ANCHO - (VX - LM);
+
+  /* — PARA — */
+  let y = 38;
+  doc.setFont('times', 'bold'); doc.text('PARA:', LM, y);
+  doc.setFont('times', 'normal');
+  doc.splitTextToSize(nombreConGrado(d.para, false) + '.', anchoVal).forEach(l => { doc.text(l, VX, y); y += PASO; });
+  doc.setFont('times', 'bold');
+  doc.splitTextToSize(String(d.para.cargo || '').toUpperCase(), anchoVal).forEach(l => { doc.text(l, VX, y); y += PASO; });
+  y += 7;
+
+  /* — DE — */
+  const de = d.firmantes[0];
+  doc.setFont('times', 'bold'); doc.text('DE:', LM, y);
+  doc.setFont('times', 'normal');
+  doc.splitTextToSize(nombreConGrado(de, false) + '.', anchoVal).forEach(l => { doc.text(l, VX, y); y += PASO; });
+  doc.setFont('times', 'bold');
+  let cargoDe = String(de.cargo || '').toUpperCase(); if (!cargoDe.endsWith('.')) cargoDe += '.';
+  doc.splitTextToSize(cargoDe, anchoVal).forEach(l => { doc.text(l, VX, y); y += PASO; });
+  y += 5;
+
+  /* — FECHA / ASUNTO — */
+  doc.setFont('times', 'bold'); doc.text('FECHA:', LM, y);
+  doc.setFont('times', 'normal'); doc.text(d.lugar + ', ' + d.fechaTexto + '.', LM + doc.getTextWidth('FECHA:  ') + 0.5, y);
+  y += PASO + 4.5;
+  doc.setFont('times', 'bold'); doc.text('ASUNTO:', LM, y);
+  const xAsunto = LM + doc.getTextWidth('ASUNTO:  ') + 0.5;
+  doc.setFont('times', 'normal');
+  doc.splitTextToSize(d.asunto, ANCHO - (xAsunto - LM)).forEach(l => { doc.text(l, xAsunto, y); y += PASO; });
+  y += 4.5;
+
+  /* — Cuerpo — */
+  const cuerpo = 'Previo atento y cordial saludo, pasando por el respectivo órgano Regular de mis inmediatos ' +
+    'superiores me dirijo a usted mi Coronel, para hacer la entrega del respectivo formato de los parámetros ' +
+    'que corresponde al mes de ' + d.mesTexto + ', ' + d.areaTexto + '.';
+  y = infJustificar(doc, cuerpo, LM, y, ANCHO, PASO);
+  y += 12;
+  doc.text('Particular que comunico para los fines de ley correspondientes.', LM, y);
+  y += 22;
+  doc.setFont('times', 'bold'); doc.text('DIOS, PATRIA Y LIBERTAD', 105, y, { align: 'center' });
+
+  /* — Firmantes (1 a 4) — */
+  const firm = d.firmantes;
+  const n = firm.length;
+  const NOMBRE_Y_ULTIMA = 240, PASO_FILA = 38;
+  const celdas = [];   // { p, cx, ancho, fila }
+  if (n === 1) {
+    celdas.push({ p: firm[0], cx: 105, ancho: 150, fila: 0 });
+  } else if (n === 2) {
+    celdas.push({ p: firm[0], cx: 56, ancho: 92, fila: 0 }, { p: firm[1], cx: 154, ancho: 92, fila: 0 });
+  } else {
+    // columnas: la izquierda se llena primero (hasta 2), luego la derecha
+    celdas.push({ p: firm[0], cx: 56, ancho: 92, fila: 0 }, { p: firm[1], cx: 56, ancho: 92, fila: 1 });
+    celdas.push({ p: firm[2], cx: 154, ancho: 92, fila: 0 });
+    if (n === 4) celdas.push({ p: firm[3], cx: 154, ancho: 92, fila: 1 });
+  }
+  const hayDosFilas = celdas.some(c => c.fila === 1);
+  const tam = n === 1 ? 12 : 11;
+  celdas.forEach(c => {
+    const yNombre = hayDosFilas ? NOMBRE_Y_ULTIMA - PASO_FILA * (1 - c.fila) : NOMBRE_Y_ULTIMA;
+    doc.setFont('times', 'normal'); doc.setFontSize(tam);
+    doc.splitTextToSize(nombreConGrado(c.p, true), c.ancho).forEach((l, i) => doc.text(l, c.cx, yNombre + i * 5, { align: 'center' }));
+    const lineasNom = doc.splitTextToSize(nombreConGrado(c.p, true), c.ancho).length;
+    doc.setFont('times', 'bold');
+    doc.splitTextToSize(String(c.p.cargo || '').toUpperCase(), c.ancho)
+      .forEach((l, i) => doc.text(l, c.cx, yNombre + lineasNom * 5 + 1 + i * 5, { align: 'center' }));
+  });
+
+  /* — Pie de página — */
+  doc.setFontSize(7); doc.setTextColor(...GRIS);
+  const pie = [['Dirección:', ' Chile 1710 y Cuenca'], ['Código postal:', ' 090109 / Guayaquil-Ecuador'],
+               ['Teléfono:', ' 3731750 / 1800-103103'], ['', 'www.comisiontransito.gob.ec']];
+  pie.forEach((par, i) => {
+    const yy = 283 + i * 3.3;
+    doc.setFont('helvetica', 'bold'); doc.text(par[0], 17.5, yy);
+    const anchoEtiqueta = doc.getTextWidth(par[0]);
+    doc.setFont('helvetica', 'normal'); doc.text(par[1], 17.5 + anchoEtiqueta, yy);
+  });
+  if (imgs && imgs.logo) doc.addImage(imgs.logo, 'PNG', 150, 280.5, 50, 13.3, undefined, 'FAST');
+  doc.setTextColor(0, 0, 0);
+  return doc;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   INFORME DE ENTREGA / ATRASO — ventana de datos dentro de Envíos
+   Es opcional: el usuario puede seguir subiendo su propio PDF.
+   Entrega o Atraso lo decide el plazo (actaEsObligatoriaHoy).
+══════════════════════════════════════════════════════════════ */
+const INF_MAX_FIRMANTES = 4;
+const INF_CARGO_PARA = 'DEPARTAMENTO DE PERSONAL Y MOVILIDAD CTE.';
+let infPersonas = null;          // lista ya parseada y ordenada por rango
+let infPersonasFuente = null;    // la lista original de la que salió (para saber si cambió)
+let infPara = { persona: null, texto: '', cargo: INF_CARGO_PARA };
+let infFirmantes = [];
+
+const infEsc = t => String(t == null ? '' : t)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const infSinTildes = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/* La lista guarda cada persona como "CODIGO - GRADO APELLIDOS NOMBRES".
+   Para separar el grado de los nombres se compara contra los grados
+   conocidos del sistema (ORDEN_GRADOS), del más largo al más corto. */
+function infSepararGrado(resto) {
+  const plano = [];
+  for (let i = 0; i < resto.length; i++) {
+    const c = resto[i].normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+    for (const ch of c) plano.push({ ch, i });
+  }
+  const extras = ['SUBINSPECTOR', 'AGENTE 1', 'AGENTE 2', 'AGENTE 3', 'AGENTE 4'];
+  const candidatos = [...ORDEN_GRADOS, ...extras]
+    .map(g => g.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[\s\-–]+/g, ''))
+    .sort((a, b) => b.length - a.length);
+  const esSep = ch => /[\s\-–]/.test(ch);
+  for (const cand of candidatos) {
+    let p = 0, ok = true;
+    for (const letra of cand) {
+      while (p < plano.length && esSep(plano[p].ch)) p++;
+      if (p >= plano.length || plano[p].ch !== letra) { ok = false; break; }
+      p++;
+    }
+    if (!ok) continue;
+    if (p < plano.length && !esSep(plano[p].ch)) continue;      // debe terminar en límite de palabra
+    const fin = plano[p - 1].i + 1;
+    return { grado: resto.slice(0, fin).trim(), nombre: resto.slice(fin).trim() };
+  }
+  return { grado: '', nombre: resto.trim() };
+}
+
+function infParsearPersona(linea) {
+  const partes = String(linea).split(' - ');
+  if (partes.length < 2) return null;
+  const codigo = partes[0].trim();
+  const { grado, nombre } = infSepararGrado(partes.slice(1).join(' - ').trim());
+  if (!codigo || !nombre) return null;
+  const gradoRango = grado.replace(/^AGENTE\s+(\d)/i, 'AGENTE DE TRANSITO $1');
+  return {
+    codigo, grado, nombre,
+    rango: indiceDeGrado(gradoRango),
+    etiqueta: `${grado ? grado + ' · ' : ''}${codigo} · ${nombre}`,
+    busqueda: infSinTildes(`${codigo} ${grado} ${nombre}`)
+  };
+}
+
+function infPrepararPersonas(lista) {
+  if (infPersonas && infPersonasFuente === lista) return;
+  infPersonas = lista.map(infParsearPersona).filter(Boolean)
+    .sort((a, b) => (a.rango - b.rango) || a.nombre.localeCompare(b.nombre, 'es'));
+  infPersonasFuente = lista;
+}
+
+/* "UCT SUSUDEL" → "Susudel" · "UCF – CEBAF NUEVA LOJA G1" → "Nueva Loja" (editable por el usuario) */
+function infLugarDesdeArea(area) {
+  let t = String(area || '').toUpperCase().replace(/[–—-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const prefijos = ['UCT', 'OIAT', 'UCF', 'CEBAF', 'CRV', 'OIA', 'DAI', 'UNIDAD', 'DISTRITO'];
+  let cambio = true;
+  while (cambio) {
+    cambio = false;
+    for (const pf of prefijos) {
+      if (t === pf) break;
+      if (t.startsWith(pf + ' ')) { t = t.slice(pf.length + 1); cambio = true; }
+    }
+  }
+  t = t.replace(/\s+G\s?\d+(\s*[-–y]\s*\d+)?$/i, '').trim();
+  return infTitulo(t) || 'Guayaquil';
+}
+
+/* ── Tarjeta dentro de Envíos ── */
+function infActualizarTarjeta() {
+  const tarde = actaEsObligatoriaHoy();
+  const btn = $('btn-inf-abrir');
+  if (btn) btn.innerHTML = tarde ? '📄 Generar Informe de Atraso' : '📄 Generar Informe de Entrega';
+  const sub = $('inf-card-sub');
+  if (sub) sub.textContent = tarde
+    ? 'Su envío está fuera de plazo: el sistema preparará la carta como INFORME DE ATRASO.'
+    : 'El sistema prepara la carta de entrega con los datos del personal. Usted solo elige a las personas.';
+}
+
+/* ── Buscadores (lista completa + escribir para filtrar) ── */
+function infCbEstado(clave) {
+  return clave === 'para' ? infPara : infFirmantes[parseInt(clave.slice(1), 10)];
+}
+
+function infCbRender(clave) {
+  const st = infCbEstado(clave), lista = $('inf-lista-' + clave);
+  if (!st || !lista || !infPersonas) return;
+  const q = infSinTildes(st.persona ? '' : st.texto).trim();
+  const terminos = q.split(/\s+/).filter(Boolean);
+  const idxs = [];
+  let total = 0;
+  for (let i = 0; i < infPersonas.length; i++) {
+    const p = infPersonas[i];
+    if (terminos.every(t => p.busqueda.includes(t))) { total++; if (idxs.length < 60) idxs.push(i); }
+  }
+  lista.innerHTML = idxs.length
+    ? idxs.map(i => {
+        const p = infPersonas[i];
+        return `<div class="inf-cb-item" onclick="infCbElegir('${clave}',${i})">` +
+               `<span class="inf-cb-grado">${infEsc(p.grado || 'SIN GRADO')}</span> ` +
+               `<b>${infEsc(p.codigo)}</b> · ${infEsc(p.nombre)}</div>`;
+      }).join('') + (total > idxs.length
+        ? `<div class="inf-cb-mas">Mostrando ${idxs.length} de ${total}. Escriba más para acotar la búsqueda.</div>` : '')
+    : `<div class="inf-cb-mas">Sin resultados</div>`;
+  lista.style.display = 'block';
+}
+
+function infCbAbrir(clave) { infCbRender(clave); }
+
+function infCbEscribir(clave) {
+  const st = infCbEstado(clave), inp = $('inf-in-' + clave);
+  if (!st || !inp) return;
+  st.texto = inp.value;
+  st.persona = null;               // si escribe de nuevo, debe volver a elegir de la lista
+  inp.classList.remove('inf-ok');
+  infCbRender(clave);
+}
+
+function infCbElegir(clave, idx) {
+  const st = infCbEstado(clave), p = infPersonas[idx], inp = $('inf-in-' + clave);
+  if (!st || !p || !inp) return;
+  st.persona = p; st.texto = p.etiqueta;
+  inp.value = p.etiqueta;
+  inp.classList.add('inf-ok');
+  const lista = $('inf-lista-' + clave); if (lista) lista.style.display = 'none';
+}
+
+function infCargoEscribir(clave) {
+  const st = infCbEstado(clave), inp = $('inf-cargo-' + clave);
+  if (st && inp) st.cargo = inp.value;
+}
+
+/* ── Firmantes (mínimo 1, máximo 4) ── */
+function infRenderFirmantes() {
+  const cont = $('inf-firmantes'); if (!cont) return;
+  cont.innerHTML = infFirmantes.map((f, i) => `
+    <div class="inf-firmante">
+      <div class="inf-firmante-cab">
+        <span>Firmante ${i + 1}${i === 0 ? ' <small>· es quien aparece en "DE"</small>' : ''}</span>
+        <button type="button" class="inf-quitar" onclick="infQuitarFirmante(${i})" ${infFirmantes.length <= 1 ? 'disabled' : ''}>✕ Quitar</button>
+      </div>
+      <div class="inf-cb">
+        <input type="text" id="inf-in-f${i}" class="form-select${f.persona ? ' inf-ok' : ''}" autocomplete="off"
+               placeholder="Escriba el código o el nombre para buscar..." value="${infEsc(f.persona ? f.persona.etiqueta : f.texto)}"
+               onfocus="infCbAbrir('f${i}')" oninput="infCbEscribir('f${i}')">
+        <div id="inf-lista-f${i}" class="inf-cb-lista" style="display:none"></div>
+      </div>
+      <input type="text" id="inf-cargo-f${i}" class="form-select inf-cargo" autocomplete="off"
+             placeholder="Cargo que aparece bajo la firma (ej.: JEFE UCT SUSUDEL)" value="${infEsc(f.cargo)}"
+             oninput="infCargoEscribir('f${i}')">
+    </div>`).join('');
+  const btn = $('btn-inf-agregar');
+  if (btn) {
+    btn.disabled = infFirmantes.length >= INF_MAX_FIRMANTES;
+    btn.textContent = infFirmantes.length >= INF_MAX_FIRMANTES
+      ? `Máximo ${INF_MAX_FIRMANTES} firmantes` : '+ Agregar otro firmante';
+  }
+}
+
+function infAgregarFirmante() {
+  if (infFirmantes.length >= INF_MAX_FIRMANTES) return;
+  const area = ($('area-select')?.value || '').toUpperCase();
+  infFirmantes.push({ persona: null, texto: '', cargo: 'SECRETARIO ' + area });
+  infRenderFirmantes();
+}
+
+function infQuitarFirmante(i) {
+  if (infFirmantes.length <= 1) return;
+  infFirmantes.splice(i, 1);
+  infRenderFirmantes();
+}
+
+/* ── Abrir / cerrar ventana ── */
+function infFechaIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function abrirModalInforme() {
+  const area = $('area-select')?.value;
+  if (!area) {
+    toast('Primero seleccione el Área en "Nuevo Envío" (más abajo en esta pantalla).', 'err');
+    const ab = $('area-select-buscar');
+    if (ab) { ab.scrollIntoView({ behavior: 'smooth', block: 'center' }); ab.focus(); }
+    return;
+  }
+  const lista = await obtenerListaPersonal();
+  if (!lista || !lista.length) { toast('No se pudo cargar la base de personal. Intente nuevamente.', 'err'); return; }
+  infPrepararPersonas(lista);
+
+  const tarde = actaEsObligatoriaHoy();
+  const hoy = new Date();
+  $('inf-modal-titulo').textContent = tarde ? 'Informe de Atraso' : 'Informe de Entrega';
+  const aviso = $('inf-aviso');
+  aviso.className = 'inf-aviso ' + (tarde ? 'inf-aviso-tarde' : 'inf-aviso-ok');
+  aviso.textContent = tarde
+    ? 'Su envío está fuera de plazo, por eso el documento saldrá titulado INFORME DE ATRASO.'
+    : 'Su envío está dentro del plazo: el documento saldrá titulado INFORME DE ENTREGA.';
+
+  $('inf-lugar').value = infLugarDesdeArea(area);
+  const f = $('inf-fecha');
+  f.min = infFechaIso(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+  f.max = infFechaIso(hoy);
+  f.value = infFechaIso(hoy);
+  // Asunto por defecto: el mes que se está entregando (el mes anterior). El usuario puede cambiarlo.
+  const mesAsunto = obtenerMesReporte();
+  $('inf-asunto').value = `Informe ${MESES_ES[mesAsunto.getMonth()].toLowerCase()} ${mesAsunto.getFullYear()}`;
+  $('inf-complemento').value = '';
+  $('inf-area-nombre').textContent = infTitulo(area);
+
+  infPara = { persona: null, texto: '', cargo: INF_CARGO_PARA };
+  const ip = $('inf-in-para'); ip.value = ''; ip.classList.remove('inf-ok');
+  $('inf-cargo-para').value = INF_CARGO_PARA;
+  infFirmantes = [{ persona: null, texto: '', cargo: 'JEFE ' + area.toUpperCase() }];
+  infRenderFirmantes();
+  $('modal-informe').style.display = 'flex';
+}
+
+function cerrarModalInforme() { $('modal-informe').style.display = 'none'; }
+
+document.addEventListener('click', e => {
+  if (!e.target.closest || e.target.closest('.inf-cb')) return;
+  document.querySelectorAll('.inf-cb-lista').forEach(l => { l.style.display = 'none'; });
+});
+
+/* ── Generar y descargar ── */
+async function infGenerar() {
+  const area = $('area-select')?.value;
+  if (!area) { toast('Seleccione el área del envío.', 'err'); return; }
+  if (!infPara.persona) { toast('Elija de la lista a quién va dirigido el informe (PARA).', 'err'); $('inf-in-para')?.focus(); return; }
+  if (!String(infPara.cargo || '').trim()) { toast('Escriba el cargo o dependencia de quien recibe (PARA).', 'err'); return; }
+  for (let i = 0; i < infFirmantes.length; i++) {
+    if (!infFirmantes[i].persona) { toast(`Elija de la lista a la persona del firmante ${i + 1}.`, 'err'); $('inf-in-f' + i)?.focus(); return; }
+    if (!String(infFirmantes[i].cargo || '').trim()) { toast(`Escriba el cargo del firmante ${i + 1}.`, 'err'); $('inf-cargo-f' + i)?.focus(); return; }
+  }
+  const lugar = $('inf-lugar').value.trim();
+  if (!lugar) { toast('Escriba el lugar (ciudad o cantón).', 'err'); return; }
+  const asunto = $('inf-asunto').value.trim();
+  if (!asunto) { toast('Escriba el asunto.', 'err'); return; }
+  const fecha = $('inf-fecha').value;
+  const f = $('inf-fecha');
+  if (!fecha || fecha < f.min || fecha > f.max) {
+    toast('La fecha debe ser de este mes, desde el día 1 hasta hoy.', 'err'); return;
+  }
+
+  const btn = $('btn-inf-generar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando...'; }
+  try {
+    if (!window.jspdf) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        s.onload = res; s.onerror = rej; document.head.appendChild(s);
+      });
+    }
+    const [escudo, logo] = await Promise.all([
+      cargarImagenComoBase64('img/escudo-informe.png').catch(() => null),
+      cargarImagenComoBase64('img/logo-nuevo-ecuador.png').catch(() => null)
+    ]);
+    const tarde = actaEsObligatoriaHoy();
+    const [a, m, dd] = fecha.split('-').map(Number);
+    const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const fechaTexto = `${dias[new Date(a, m - 1, dd).getDay()]} ${String(dd).padStart(2, '0')} de ${MESES_ES[m - 1].toLowerCase()} del ${a}`;
+    const mesRep = obtenerMesReporte();
+    const mesTexto = `${MESES_ES[mesRep.getMonth()].toLowerCase()} del ${mesRep.getFullYear()}`;
+    const complemento = $('inf-complemento').value.trim();
+
+    const doc = infConstruirPdf(window.jspdf.jsPDF, {
+      titulo: tarde ? 'INFORME DE ATRASO.' : 'INFORME DE ENTREGA.',
+      lugar: infTitulo(lugar), fechaTexto, asunto, mesTexto,
+      areaTexto: infTitulo(area) + (complemento ? ' ' + complemento : ''),
+      para: { ...infPara.persona, cargo: infPara.cargo.trim() },
+      firmantes: infFirmantes.map(x => ({ ...x.persona, cargo: x.cargo.trim() }))
+    }, { escudo, logo });
+
+    const nombre = `${nombreBaseEnvio(area)}_${tarde ? 'ATRASO' : 'INFORME'}.pdf`;
+    doc.save(nombre);
+    cerrarModalInforme();
+    toast(`✅ Documento generado: ${nombre}. Imprímalo, fírmelo y súbalo en "${tarde ? 'Informe de Atraso' : 'Informe de Entrega'}".`, 'ok');
+  } catch (e) {
+    console.error('Error generando el informe:', e);
+    toast('No se pudo generar el documento. Revise su conexión e intente de nuevo.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📄 Generar PDF'; }
+  }
+}
+
+window.abrirModalInforme   = abrirModalInforme;
+window.cerrarModalInforme  = cerrarModalInforme;
+window.infGenerar          = infGenerar;
+window.infAgregarFirmante  = infAgregarFirmante;
+window.infQuitarFirmante   = infQuitarFirmante;
+window.infCbAbrir          = infCbAbrir;
+window.infCbEscribir       = infCbEscribir;
+window.infCbElegir         = infCbElegir;
+window.infCargoEscribir    = infCargoEscribir;
+window.infActualizarTarjeta = infActualizarTarjeta;
 
 /* ══════════════════════════════════
    MODO OSCURO / CLARO

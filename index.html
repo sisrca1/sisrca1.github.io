@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="img/favicon_32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="img/favicon_16.png">
 <link rel="apple-touch-icon" href="img/SISCTE_logo_icono_256.png">
-<link rel="stylesheet" href="styles.css?v=20261001a">
+<link rel="stylesheet" href="styles.css?v=20261002b">
 <link rel="stylesheet" href="styles_novedades_v6.css?v=20260807b">
 </head>
 <body>
@@ -342,6 +342,21 @@
       <p class="page-hero-sub">Hola, <strong id="hero-nombre"></strong>. Suba su archivo (RAR, ZIP o PDF) y registre los detalles de cada envío.</p>
     </div>
     <div class="page-body">
+
+      <!-- ── FORMATO OPCIONAL: Informe de Entrega / Atraso ── -->
+      <div class="envio-card inf-card" id="inf-card">
+        <div class="envio-card-header">
+          <div class="envio-card-header-ico">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <div>
+            <div class="envio-card-titulo">Formato de informe de entrega <span class="inf-opcional">OPCIONAL</span></div>
+            <div class="envio-card-sub" id="inf-card-sub">El sistema prepara la carta de entrega con los datos del personal. Usted solo elige a las personas.</div>
+          </div>
+        </div>
+        <p class="inf-ayuda">¿No sabe cómo redactar la carta? Genérela aquí, imprímala, fírmela y súbala más abajo en <strong>Informe de Entrega</strong>. Si prefiere hacerla por su cuenta, puede omitir este paso.</p>
+        <button type="button" class="inf-btn-abrir" id="btn-inf-abrir" onclick="abrirModalInforme()">📄 Generar Informe de Entrega</button>
+      </div>
 
       <div class="envio-card">
         <div class="envio-card-header">
@@ -1342,7 +1357,7 @@
         </div>
 
         <!-- Modo Mantenimiento: bloquea el sistema a todos menos al admin -->
-        <div class="panel-white" style="margin-top:20px;padding:20px;border:2px solid var(--gold, #b8860b);">
+        <div class="panel-white" id="mant-card" style="margin-top:20px;padding:20px;border:2px solid var(--gold, #b8860b);">
           <div class="sec-titulo">🚧 Modo Mantenimiento</div>
           <p style="font-size:12px;color:var(--txt2);margin-bottom:16px;">
             Mientras está activo, <strong>solo usted (administrador) puede entrar y usar el sistema con normalidad</strong>.
@@ -1352,22 +1367,57 @@
           </p>
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
             <label class="switch-toggle" style="position:relative;display:inline-block;width:52px;height:28px;flex-shrink:0;">
-              <input type="checkbox" id="mantenimiento-activo" style="opacity:0;width:0;height:0;">
+              <input type="checkbox" id="mantenimiento-activo" style="opacity:0;width:0;height:0;" onchange="mantMarcarSucio()">
               <span id="mantenimiento-switch-visual" style="position:absolute;inset:0;background:var(--border);border-radius:28px;cursor:pointer;transition:.2s;"></span>
             </label>
             <span id="mantenimiento-estado-texto" style="font-weight:700;font-size:13px;">Desactivado — el sistema funciona con normalidad</span>
           </div>
           <div class="form-field" style="max-width:520px;">
             <label class="form-label">Mensaje para quien intente entrar (opcional)</label>
-            <input type="text" id="mantenimiento-mensaje" class="form-select" placeholder="Ej.: Volvemos en unos minutos, estamos aplicando una mejora al sistema." onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
+            <input type="text" id="mantenimiento-mensaje" class="form-select" placeholder="Ej.: Volvemos a las 22:00, estamos aplicando una mejora al sistema." oninput="mantMarcarSucio()" onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
+            <div style="margin-top:6px;font-size:11px;color:var(--txt2);line-height:1.5;">Si no activa la reapertura automática, puede indicar aquí la hora estimada para que los usuarios la lean.</div>
           </div>
-          <div class="form-field" style="max-width:520px;margin-top:12px;">
-            <label class="form-label">Activar desbloqueo de Mantenimiento al siguiente usuario</label>
-            <input type="text" id="mantenimiento-correos-exentos" class="form-select" placeholder="ejemplo1@gmail.com, ejemplo2@gmail.com" onfocus="this.dataset.editando='1'" onblur="delete this.dataset.editando">
-            <div style="margin-top:6px;font-size:11px;color:var(--txt2);line-height:1.5;">Escriba el correo del usuario (si son varios, sepárelos con coma). Esa persona podrá entrar y usar el sistema con normalidad mientras el mantenimiento esté activo; todos los demás verán la pantalla de mantenimiento. Si lo deja vacío, solo usted podrá entrar.</div>
+
+          <div class="form-field" style="margin-top:14px;">
+            <label class="form-label">Dibujo que verán los usuarios</label>
+            <div id="mant-anim-opciones" class="mant-anim-grid"></div>
           </div>
-          <button class="btn-acc btn-acc-blue" style="margin-top:14px;" onclick="guardarModoMantenimiento()">💾 Guardar</button>
+
+          <div class="form-field" style="max-width:520px;margin-top:14px;">
+            <label class="mant-check"><input type="checkbox" id="mant-auto" onchange="mantMarcarSucio();mantAutoCambio()"> Reabrir el sistema automáticamente a una hora</label>
+            <div id="mant-auto-campos" style="display:none;margin-top:10px;">
+              <div class="mant-auto-fila">
+                <input type="time" id="mant-auto-hora" class="form-select" style="width:auto;" oninput="mantMarcarSucio();mantAutoPrevia()" onchange="mantMarcarSucio();mantAutoPrevia()">
+                <button type="button" class="btn-acc btn-acc-ghost" onclick="mantMarcarSucio();mantAutoAtajo(15)">+15 min</button>
+                <button type="button" class="btn-acc btn-acc-ghost" onclick="mantMarcarSucio();mantAutoAtajo(30)">+30 min</button>
+                <button type="button" class="btn-acc btn-acc-ghost" onclick="mantMarcarSucio();mantAutoAtajo(60)">+1 h</button>
+              </div>
+              <div id="mant-auto-previa" style="margin-top:8px;font-size:12px;font-weight:600;color:var(--blue);"></div>
+              <div style="margin-top:6px;font-size:11px;color:var(--txt2);line-height:1.5;">Los usuarios verán una cuenta regresiva y, al llegar la hora, el sistema se abre solo. La hora se toma del servidor, no del reloj de cada equipo. Si deja esta casilla sin marcar, el mantenimiento dura hasta que usted lo desactive.</div>
+            </div>
+          </div>
+
+          <button class="btn-acc btn-acc-blue" style="margin-top:16px;" onclick="guardarModoMantenimiento()">💾 Guardar mantenimiento</button>
+
+          <div class="mant-sep"></div>
+
+          <div class="form-field" style="max-width:520px;">
+            <label class="form-label">Usuarios que pueden entrar durante el mantenimiento</label>
+            <div class="mant-auto-fila">
+              <input type="email" id="mant-correo-nuevo" class="form-select" style="flex:1;min-width:200px;" autocomplete="off" placeholder="correo@gmail.com" onkeydown="onTeclaCorreoExento(event)">
+              <button type="button" class="btn-acc btn-acc-blue" onclick="agregarCorreoExento()">+ Agregar</button>
+            </div>
+            <div style="margin-top:6px;font-size:11px;color:var(--txt2);line-height:1.5;">Escriba un correo a la vez, sin comas, y pulse "Agregar". Esas personas podrán entrar y usar el sistema con normalidad mientras el mantenimiento esté activo (por ejemplo, para probar los cambios); todos los demás verán la pantalla de mantenimiento.</div>
+            <div id="mant-exentos-lista" class="mant-ex-lista"></div>
+            <div class="mant-auto-fila" style="margin-top:10px;align-items:center;">
+              <button type="button" id="mant-exentos-guardar" class="btn-acc btn-acc-blue" onclick="guardarCorreosExentos()" disabled>💾 Guardar cambios de la lista</button>
+              <span id="mant-exentos-estado" style="font-size:11px;color:var(--txt2);"></span>
+            </div>
+            <div style="margin-top:6px;font-size:11px;color:var(--txt2);line-height:1.5;">Este botón guarda solo la lista. No activa ni desactiva el mantenimiento, así que puede agregar o quitar usuarios en cualquier momento sin tocar nada más.</div>
+          </div>
+
           <div id="mantenimiento-info" style="margin-top:12px;font-size:11px;color:var(--txt2);"></div>
+          <div id="mant-reloj-estado" style="margin-top:6px;font-size:11px;color:var(--txt2);"></div>
         </div>
       </div>
 
@@ -1383,7 +1433,7 @@
      desaparece sola, sin recargar, apenas el admin activa o desactiva. -->
 <div id="pantalla-mantenimiento" style="display:none;position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#0d1b3e 0%,#1a2f5e 50%,#1e3a6e 100%);align-items:center;justify-content:center;padding:24px;">
   <div style="max-width:520px;width:100%;text-align:center;">
-    <div style="font-size:64px;line-height:1;margin-bottom:8px;animation:mantenimiento-pulso 2.4s ease-in-out infinite;">🚧</div>
+    <div id="pm-animacion" style="width:100%;max-width:440px;margin:0 auto 6px;"></div>
     <h1 style="color:#fff;font-family:var(--font-brand);font-size:26px;letter-spacing:.04em;text-transform:uppercase;margin:0 0 10px;">
       Sistema en mantenimiento
     </h1>
@@ -1391,12 +1441,17 @@
     <p id="pantalla-mantenimiento-mensaje" style="color:rgba(255,255,255,.85);font-size:15px;line-height:1.6;margin:0 0 28px;">
       Estamos aplicando una mejora al sistema. Vuelva a intentarlo en unos minutos.
     </p>
+    <div id="pm-crono-wrap" style="display:none;margin:-10px 0 26px;">
+      <div style="color:rgba(255,255,255,.7);font-size:12px;">El sistema se reabre en</div>
+      <div id="pm-crono" role="timer" style="color:#e8b84b;font-family:var(--font-brand);font-size:46px;font-weight:700;letter-spacing:.05em;line-height:1.15;font-variant-numeric:tabular-nums;">--:--</div>
+      <div id="pm-crono-hora" style="color:rgba(255,255,255,.7);font-size:12px;"></div>
+    </div>
     <div style="display:inline-flex;align-items:center;gap:8px;background:rgba(0,0,0,.28);border:1px solid rgba(201,162,39,.35);border-radius:20px;padding:8px 18px;color:#e8b84b;font-size:12px;font-weight:700;letter-spacing:.04em;">
       <span style="width:8px;height:8px;border-radius:50%;background:#e8b84b;animation:mantenimiento-parpadeo 1.4s ease-in-out infinite;"></span>
       RCA — Unidad de Personal y Movilidad CTE
     </div>
-    <p style="margin-top:28px;">
-      <button class="btn-acc btn-acc-ghost" style="color:rgba(255,255,255,.6);border-color:rgba(255,255,255,.25);" onclick="logout()">Salir</button>
+    <p style="margin-top:28px;display:flex;justify-content:center;">
+      <button class="btn-acc btn-acc-ghost" style="background:transparent;color:rgba(255,255,255,.75);border-color:rgba(255,255,255,.35);" onclick="logout()">Salir</button>
     </p>
   </div>
 </div>
@@ -1538,6 +1593,63 @@
         <button class="btn-modal-cancel" onclick="cerrarModalSolicitudDesbloqueo()">Cancelar</button>
         <button class="btn-modal-primary" onclick="confirmarSolicitudDesbloqueo()">Enviar solicitud</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: datos del Informe de Entrega / Atraso ═══ -->
+<div id="modal-informe" class="modal-overlay" style="display:none">
+  <div class="modal-card inf-modal">
+    <div class="modal-header">
+      <div class="modal-ico">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </div>
+      <div>
+        <div class="modal-titulo" id="inf-modal-titulo">Informe de Entrega</div>
+        <div class="modal-sub">Área: <span id="inf-area-nombre"></span> · los datos salen de la base de personal</div>
+      </div>
+      <button class="modal-cerrar" onclick="cerrarModalInforme()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="inf-aviso" class="inf-aviso"></div>
+
+      <div class="inf-fila">
+        <div class="form-field">
+          <label class="form-label">Lugar</label>
+          <input type="text" id="inf-lugar" class="form-select" autocomplete="off">
+        </div>
+        <div class="form-field">
+          <label class="form-label">Fecha <small class="inf-peq">(de este mes, hasta hoy)</small></label>
+          <input type="date" id="inf-fecha" class="form-select">
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label class="form-label">Asunto</label>
+        <input type="text" id="inf-asunto" class="form-select" autocomplete="off">
+      </div>
+      <div class="form-field">
+        <label class="form-label">Complemento del área <small class="inf-peq">(opcional, ej.: Grupo 1 – 2)</small></label>
+        <input type="text" id="inf-complemento" class="form-select" autocomplete="off" placeholder="Se escribe después del nombre del área en el texto de la carta">
+      </div>
+
+      <div class="inf-seccion">Dirigido a <small>(PARA)</small></div>
+      <div class="inf-cb">
+        <input type="text" id="inf-in-para" class="form-select" autocomplete="off"
+               placeholder="Escriba el código o el nombre para buscar..."
+               onfocus="infCbAbrir('para')" oninput="infCbEscribir('para')">
+        <div id="inf-lista-para" class="inf-cb-lista" style="display:none"></div>
+      </div>
+      <input type="text" id="inf-cargo-para" class="form-select inf-cargo" autocomplete="off"
+             placeholder="Cargo o dependencia de quien recibe" oninput="infCargoEscribir('para')">
+
+      <div class="inf-seccion">Quién firma <small>(DE · de 1 a 4 personas)</small></div>
+      <div id="inf-firmantes"></div>
+      <button type="button" class="inf-btn-agregar" id="btn-inf-agregar" onclick="infAgregarFirmante()">+ Agregar otro firmante</button>
+    </div>
+    <div class="inf-pie">
+      <button type="button" class="inf-btn-cancelar" onclick="cerrarModalInforme()">Cancelar</button>
+      <button type="button" class="inf-btn-generar" id="btn-inf-generar" onclick="infGenerar()">📄 Generar PDF</button>
     </div>
   </div>
 </div>
@@ -2050,6 +2162,6 @@
   });
 </script>
 
-<script type="module" src="app.js?v=20261001a"></script>
+<script type="module" src="app.js?v=20261002b"></script>
 </body>
 </html>
