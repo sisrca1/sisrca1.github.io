@@ -2880,12 +2880,26 @@ async function llenarSinNovedadHoy() {
 ══════════════════════════════════════════════════════════════ */
 let mlEfectivos = [];          // efectivos del área abierta: { key, texto, idx }
 let mlSeleccion = new Set();   // claves de los efectivos marcados
+let mlPeriodo = '';            // mes (AAAA-MM) elegido en el modal; por defecto el mes en curso
+let mlDoc = null;              // datos de ese mes: { agentes, estado, diasNoCompletados, diasDesbloqueados }
+let mlToken = 0;               // evita que una carga lenta pise a otra más reciente
+function mlAgentes() { return (mlDoc && Array.isArray(mlDoc.agentes)) ? mlDoc.agentes : []; }
+
+// Recalcula si un día quedó completo, sobre el documento del mes elegido
+// (igual a actualizarDiaCompletado, pero no depende del mes en pantalla)
+function mlRecalcularDia(doc, dia) {
+  const ags = doc.agentes || [];
+  const completo = ags.length > 0 && ags.every(a => a.novedadesPorDia && a.novedadesPorDia[String(dia)]);
+  if (!doc.diasNoCompletados) doc.diasNoCompletados = [];
+  if (completo) doc.diasNoCompletados = doc.diasNoCompletados.filter(d => d !== dia);
+  else if (!doc.diasNoCompletados.includes(dia)) doc.diasNoCompletados.push(dia);
+}
 
 // Clave estable de un efectivo (no depende del orden de la lista)
 function mlClave(a) { return `${_normCodigoAgente(a.codigo)}|${String(a.apellidosNombres || '').trim()}`; }
 
 function mlRango() {
-  const total = diasEnMes(mesActual);
+  const total = diasEnMes(mlPeriodo || mesActual);
   const desde = parseInt($('ml-desde').value, 10), hasta = parseInt($('ml-hasta').value, 10);
   const valido = Number.isInteger(desde) && Number.isInteger(hasta) && desde >= 1 && hasta <= total && desde <= hasta;
   return { desde, hasta, total, valido };
@@ -2896,7 +2910,7 @@ function mlContarVacios(desde, hasta) {
   let casillas = 0;
   const conVacios = new Set();
   let seleccionados = 0;
-  (novedadesActuales.agentes || []).forEach((ag, i) => {
+  mlAgentes().forEach((ag, i) => {
     if (!mlSeleccion.has(mlClave(ag))) return;
     seleccionados++;
     const dias = ag.novedadesPorDia || {};
@@ -2904,7 +2918,7 @@ function mlContarVacios(desde, hasta) {
       if (!dias[String(d)]) { casillas++; conVacios.add(i); }
     }
   });
-  return { casillas, efectivos: conVacios.size, seleccionados, totalEfectivos: (novedadesActuales.agentes || []).length };
+  return { casillas, efectivos: conVacios.size, seleccionados, totalEfectivos: mlAgentes().length };
 }
 
 function mlVaciasDeEfectivo(ag, desde, hasta) {
@@ -2925,7 +2939,7 @@ function mlRenderEfectivos(r) {
   const cont = $('ml-efectivos');
   if (!cont) return;
   cont.innerHTML = mlEfectivos.map((e, i) => {
-    const vac = mlVaciasDeEfectivo(novedadesActuales.agentes[e.idx], r.desde, r.hasta);
+    const vac = mlVaciasDeEfectivo(mlAgentes()[e.idx], r.desde, r.hasta);
     return `<label class="ml-ef"><input type="checkbox" ${mlSeleccion.has(e.key) ? 'checked' : ''} onchange="mlToggle(${i}, this.checked)">` +
            `<span class="ml-ef-nom">${mantEsc(e.texto)}</span><span class="ml-ef-vac">${vac} vacía${vac === 1 ? '' : 's'}</span></label>`;
   }).join('');
@@ -2948,6 +2962,12 @@ function mlActualizarResumen(redibujar = true) {
   if (!res || !btn) return;
   const r = mlRango();
   mlPintarResumenEfectivos();
+  if (!mlAgentes().length) {
+    res.className = 'ml-resumen ml-resumen-err';
+    res.textContent = 'Esta área no tiene efectivos registrados en el mes elegido: no hay nada que llenar.';
+    btn.disabled = true; btn.textContent = 'Llenar casillas vacías';
+    return;
+  }
   if (!r.valido) {
     res.className = 'ml-resumen ml-resumen-err';
     res.textContent = `Revise los días: deben estar entre 1 y ${r.total}, y "desde" no puede ser mayor que "hasta".`;
@@ -2980,11 +3000,11 @@ function mlActualizarResumen(redibujar = true) {
 }
 
 function mlAtajo(tipo) {
-  const total = diasEnMes(mesActual);
+  const total = diasEnMes(mlPeriodo || mesActual);
   $('ml-desde').value = 1;
   if (tipo === 'hoy') {
     const hoy = new Date();
-    const [a, m] = mesActual.split('-').map(Number);
+    const [a, m] = (mlPeriodo || mesActual).split('-').map(Number);
     $('ml-hasta').value = (hoy.getFullYear() === a && hoy.getMonth() + 1 === m) ? hoy.getDate() : total;
   } else {
     $('ml-hasta').value = total;
@@ -3003,21 +3023,66 @@ function abrirModalLlenarMes() {
     sel.innerHTML = CODIGOS_VALIDOS.map(c => `<option value="${c}">${c} — ${mantEsc(CODIGOS_DESC[c] || '')}</option>`).join('');
   }
   sel.value = 'S/N';
-  const [a, m] = mesActual.split('-');
+
+  // Selector de mes (solo administrador): el mes en curso y los 12 anteriores
+  const selMes = $('ml-periodo');
+  const opciones = [];
+  let p = mesActual;
+  for (let i = 0; i < 13; i++) {
+    const [a, m] = p.split('-');
+    opciones.push(`<option value="${p}">${obtenerNombreMes(m)} ${a}${i === 0 ? ' (mes actual)' : ''}</option>`);
+    p = obtenerPeriodoAnterior(p);
+  }
+  selMes.innerHTML = opciones.join('');
+  selMes.value = mesActual;
+
   $('ml-area').textContent = areaActual;
+  $('modal-llenar-mes').style.display = 'flex';
+  mlCambiarPeriodo(mesActual);
+}
+
+// Carga los datos del mes elegido (el mes en curso ya está en memoria; los
+// meses anteriores se leen de Firestore) y reinicia lista de efectivos y rango.
+async function mlCambiarPeriodo(periodo) {
+  const token = ++mlToken;
+  mlPeriodo = periodo;
+  const [a, m] = periodo.split('-');
   $('ml-mes').textContent = `${obtenerNombreMes(m)} ${a}`;
+  const btn = $('btn-ml-aplicar');
   const aviso = $('ml-aviso');
-  const cerrado = novedadesActuales.estado === 'cerrado';
-  aviso.style.display = cerrado ? 'block' : 'none';
-  aviso.textContent = cerrado ? 'Este mes ya tiene el informe generado: los cambios no modifican los archivos que ya se enviaron.' : '';
-  mlEfectivos = (novedadesActuales.agentes || []).map((a, idx) => ({
-    key: mlClave(a), idx,
-    texto: `${a.grado ? a.grado + ' · ' : ''}${a.codigo ? a.codigo + ' · ' : ''}${a.apellidosNombres || '(sin nombre)'}`
+
+  if (periodo === mesActual) {
+    mlDoc = novedadesActuales;
+  } else {
+    mlDoc = null;
+    mlEfectivos = []; mlSeleccion = new Set();
+    btn.disabled = true; btn.textContent = 'Cargando...';
+    try {
+      const snap = await window._fb.getDoc(window._fb.doc(db, 'novedades', areaActual, periodo, 'datos'));
+      if (token !== mlToken) return;           // eligió otro mes mientras cargaba
+      mlDoc = snap.exists() ? snap.data() : null;
+    } catch (e) {
+      if (token !== mlToken) return;
+      console.error('Error leyendo el mes:', e);
+      toast('❌ No se pudo leer ese mes: ' + e.message, 'err');
+    }
+  }
+
+  const cerrado = !!(mlDoc && mlDoc.estado === 'cerrado');
+  const esAnterior = periodo !== mesActual;
+  const avisos = [];
+  if (cerrado) avisos.push('Este mes ya tiene el informe generado: los cambios no modifican los archivos que ya se enviaron.');
+  if (esAnterior && !cerrado && mlAgentes().length) avisos.push('Está llenando un mes anterior. Los secretarios verán esas casillas ya registradas.');
+  aviso.style.display = avisos.length ? 'block' : 'none';
+  aviso.textContent = avisos.join(' ');
+
+  mlEfectivos = mlAgentes().map((ag, idx) => ({
+    key: mlClave(ag), idx,
+    texto: `${ag.grado ? ag.grado + ' · ' : ''}${ag.codigo ? ag.codigo + ' · ' : ''}${ag.apellidosNombres || '(sin nombre)'}`
   }));
   mlSeleccion = new Set(mlEfectivos.map(e => e.key));
   const det = $('ml-ef-det'); if (det) det.open = false;
   mlAtajo('mes');
-  $('modal-llenar-mes').style.display = 'flex';
 }
 
 function cerrarModalLlenarMes() { $('modal-llenar-mes').style.display = 'none'; }
@@ -3033,18 +3098,21 @@ async function llenarMesCompleto() {
   try {
     // Se vuelve a leer el documento justo antes de escribir, para no pisar lo que
     // un secretario haya registrado mientras esta ventana estaba abierta.
-    const ref = window._fb.doc(db, 'novedades', areaActual, mesActual, 'datos');
+    const periodoAplicar = mlPeriodo;
+    const esMesActual = periodoAplicar === mesActual;
+    const ref = window._fb.doc(db, 'novedades', areaActual, periodoAplicar, 'datos');
     const fresco = await window._fb.getDoc(ref);
-    if (fresco.exists()) {
+    if (!fresco.exists()) { toast('❌ Ese mes ya no existe en esta área.', 'err'); return; }
+    {
       const d = fresco.data();
-      novedadesActuales.agentes = d.agentes || novedadesActuales.agentes;
-      novedadesActuales.diasNoCompletados = d.diasNoCompletados || [];
-      novedadesActuales.diasDesbloqueados = d.diasDesbloqueados || [];
+      mlDoc.agentes = d.agentes || mlDoc.agentes;
+      mlDoc.diasNoCompletados = d.diasNoCompletados || [];
+      mlDoc.diasDesbloqueados = d.diasDesbloqueados || [];
     }
     let casillas = 0;
     const efectivos = new Set();
-    const omitidos = novedadesActuales.agentes.filter(ag => !mlSeleccion.has(mlClave(ag))).length;
-    novedadesActuales.agentes.forEach((ag, i) => {
+    const omitidos = mlDoc.agentes.filter(ag => !mlSeleccion.has(mlClave(ag))).length;
+    mlDoc.agentes.forEach((ag, i) => {
       if (!mlSeleccion.has(mlClave(ag))) return;       // efectivos sin marcar: no se tocan
       if (!ag.novedadesPorDia) ag.novedadesPorDia = {};
       let tocado = false;
@@ -3057,22 +3125,24 @@ async function llenarMesCompleto() {
       }
     });
     if (!casillas) { toast('No había casillas vacías: alguien ya las había llenado.', 'err'); mlActualizarResumen(); return; }
-    for (let d = r.desde; d <= r.hasta; d++) actualizarDiaCompletado(d);
+    for (let d = r.desde; d <= r.hasta; d++) mlRecalcularDia(mlDoc, d);
 
     await window._fb.updateDoc(ref, {
-      agentes: novedadesActuales.agentes,
-      diasNoCompletados: novedadesActuales.diasNoCompletados,
-      diasDesbloqueados: novedadesActuales.diasDesbloqueados || [],
+      agentes: mlDoc.agentes,
+      diasNoCompletados: mlDoc.diasNoCompletados,
+      diasDesbloqueados: mlDoc.diasDesbloqueados || [],
       ultimaModificacion: new Date()
     });
     await registrarEnAuditoria(
-      'llenar_mes_completo', areaActual, usuario.email, null, mesActual,
+      'llenar_mes_completo', areaActual, usuario.email, null, periodoAplicar,
       { codigo, desde: r.desde, hasta: r.hasta, casillas, efectivos: efectivos.size, efectivosOmitidos: omitidos },
-      `Llenado de mes por el administrador: ${codigo} en ${casillas} casillas vacías (${efectivos.size} efectivos), días ${r.desde} al ${r.hasta}` + (omitidos ? ` · ${omitidos} efectivo(s) sin marcar` : '')
+      `Llenado de mes por el administrador (${periodoAplicar}${esMesActual ? '' : ', mes anterior'}): ${codigo} en ${casillas} casillas vacías (${efectivos.size} efectivos), días ${r.desde} al ${r.hasta}` + (omitidos ? ` · ${omitidos} efectivo(s) sin marcar` : '')
     );
     cerrarModalLlenarMes();
-    renderizarTablaNovedades(new Date().getDate());
-    verificarDiasPendientes();
+    if (esMesActual) {
+      renderizarTablaNovedades(new Date().getDate());
+      verificarDiasPendientes();
+    }
     toast(`✅ Se puso "${codigo}" en ${casillas} casillas vacías (${efectivos.size} efectivos).`, 'ok');
   } catch (e) {
     console.error('Error llenando el mes:', e);
@@ -3085,6 +3155,7 @@ window.abrirModalLlenarMes   = abrirModalLlenarMes;
 window.cerrarModalLlenarMes  = cerrarModalLlenarMes;
 window.mlActualizarResumen   = mlActualizarResumen;
 window.mlAtajo               = mlAtajo;
+window.mlCambiarPeriodo      = mlCambiarPeriodo;
 window.mlToggle              = mlToggle;
 window.mlMarcarTodos         = mlMarcarTodos;
 window.llenarMesCompleto     = llenarMesCompleto;
@@ -8521,12 +8592,14 @@ async function cargarAccesos() {
       const data = d.data();
       const correo = data.correo || d.id;
       const codigo = String(data.codigo || '').trim();
+      const telefono = String(data.telefono || '').trim();
       const info = codigo ? mapaPersonal.get(codigo) : null;
       const areas = Array.isArray(data.areas) && data.areas.length ? data.areas : (data.area ? [data.area] : []);
       return {
         id: d.id,
         correo,
         codigo,
+        telefono,
         areas,
         area: areas[0] || '',   // compatibilidad temporal para pantallas que aún leen `area`
         estado: data.estado !== false,       // si el campo no existe, se asume activo
@@ -8559,7 +8632,7 @@ function accesosFiltrados() {
   const q = accesosBusqueda.toLowerCase().trim();
   return accesosCache.filter(a => {
     if (!q) return true;
-    return [a.correo, ...(a.areas || []), a.codigo, a.nombre].some(v => String(v || '').toLowerCase().includes(q));
+    return [a.correo, ...(a.areas || []), a.codigo, a.telefono, a.nombre].some(v => String(v || '').toLowerCase().includes(q));
   });
 }
 
@@ -8625,6 +8698,7 @@ function renderizarAccesos() {
         ? `<span style="color:var(--gold);font-weight:700;">📍 ${a.areas.join('  ·  ')}</span>`
         : `<span style="color:var(--red);">Sin área asignada</span>`,
       a.codigo ? `CÓD: ${a.codigo}` : `<span style="color:var(--red);">sin código</span>`,
+      a.telefono ? `📞 ${a.telefono}` : `<span style="color:var(--red);">sin teléfono</span>`,
     ].join(' <span style="color:var(--txt3);">|</span> ');
 
     return `
@@ -8713,6 +8787,7 @@ async function exportarAccesos() {
     ws.columns = [
       { header: 'CORREO',   key: 'correo', width: 34 },
       { header: 'CODIGO',   key: 'codigo', width: 12 },
+      { header: 'TELEFONO', key: 'telefono', width: 14 },
       { header: 'NOMBRE',   key: 'nombre', width: 44 },
       { header: 'AREA',     key: 'area',   width: 34 },
       { header: 'PERFIL',   key: 'perfil', width: 18 },
@@ -8724,6 +8799,7 @@ async function exportarAccesos() {
     accesosFiltrados().forEach(a => ws.addRow({
       correo: a.correo,
       codigo: a.codigo || '',
+      telefono: a.telefono || '',
       nombre: a.nombre || '',
       area: a.area || '',
       perfil: a.perfil === 'RAIZ' ? 'ADMINISTRADOR RAÍZ' : (PERFILES[a.perfil]?.label || a.perfil),
@@ -8908,15 +8984,27 @@ async function verificarCodigoAcceso() {
   }
 }
 
+/* ── Teléfono del acceso ──
+   Acepta "0980379977", "098 037 9977", "098-037-9977", "+593 98 037 9977"
+   y "980379977" (Excel suele comerse el 0 inicial). Devuelve el número
+   normalizado de 10 dígitos (09XXXXXXXX) o '' si no es un celular válido. */
+function normalizarTelefonoEC(valor) {
+  let d = String(valor || '').replace(/\D/g, '');
+  if (d.startsWith('593') && d.length === 12) d = '0' + d.slice(3);
+  if (d.length === 9 && d.startsWith('9')) d = '0' + d;
+  return /^09\d{8}$/.test(d) ? d : '';
+}
+
 async function mostrarFormAcceso() {
   modalAccesoDocIdEdicion = null;
   await poblarSelectAreaAcceso([]);
   $('modal-acceso-titulo').textContent = 'Nuevo Acceso';
-  $('modal-acceso-sub').textContent = 'Asigne un código y una o varias áreas a este correo';
+  $('modal-acceso-sub').textContent = 'Asigne un código, un teléfono y una o varias áreas a este correo';
   $('modal-acceso-correo').value = '';
   $('modal-acceso-correo').disabled = false;
   if ($('modal-acceso-codigo')) $('modal-acceso-codigo').value = '';
   if ($('modal-acceso-codigo-info')) $('modal-acceso-codigo-info').textContent = '';
+  if ($('modal-acceso-telefono')) $('modal-acceso-telefono').value = '';
   $('modal-acceso').style.display = 'flex';
   hide('modal-acceso-error');
   $('modal-acceso-correo').focus();
@@ -8931,11 +9019,12 @@ async function editarAcceso(docId) {
   modalAccesoDocIdEdicion = docId;
   await poblarSelectAreaAcceso(acceso.areas || []);
   $('modal-acceso-titulo').textContent = 'Editar Acceso';
-  $('modal-acceso-sub').textContent = 'Cambie el correo, el código o las áreas asignadas';
+  $('modal-acceso-sub').textContent = 'Cambie el correo, el código, el teléfono o las áreas asignadas';
   $('modal-acceso-correo').value = acceso.correo || docId;
   $('modal-acceso-correo').disabled = false; // el correo ahora sí se puede editar
   if ($('modal-acceso-codigo')) $('modal-acceso-codigo').value = acceso.codigo || '';
   if ($('modal-acceso-codigo-info')) $('modal-acceso-codigo-info').textContent = '';
+  if ($('modal-acceso-telefono')) $('modal-acceso-telefono').value = acceso.telefono || '';
   if (acceso.codigo) verificarCodigoAcceso();
   hide('modal-acceso-error');
   $('modal-acceso').style.display = 'flex';
@@ -8962,12 +9051,26 @@ async function confirmarGuardarAcceso() {
     show('modal-acceso-error');
     return;
   }
+  const telefonoCrudo = ($('modal-acceso-telefono')?.value || '').trim();
+  if (!telefonoCrudo) {
+    errorEl.textContent = 'El número de teléfono es obligatorio';
+    show('modal-acceso-error');
+    return;
+  }
+  const telefono = normalizarTelefonoEC(telefonoCrudo);
+  if (!telefono) {
+    errorEl.textContent = 'Ingrese un celular válido de 10 dígitos que empiece con 09 (ej. 0980379977)';
+    show('modal-acceso-error');
+    return;
+  }
 
-  await guardarAcceso(correo, areas, codigo, modalAccesoDocIdEdicion);
+  await guardarAcceso(correo, areas, codigo, modalAccesoDocIdEdicion, telefono);
   cerrarModalAcceso();
 }
 
-async function guardarAcceso(correo, areas, codigo, docIdAnterior = null) {
+// `telefono` es opcional en la firma a propósito: los llamadores que no lo conocen
+// (p. ej. "unificar áreas") no lo pasan y el que ya estaba guardado se CONSERVA.
+async function guardarAcceso(correo, areas, codigo, docIdAnterior = null, telefono = undefined) {
   try {
     const correoNorm = correo.toLowerCase().trim();
     const accesoRef = window._fb.doc(db, 'accesos', correoNorm);
@@ -8995,6 +9098,7 @@ async function guardarAcceso(correo, areas, codigo, docIdAnterior = null) {
         ...datosAnteriores,
         correo: correoNorm,
         codigo: String(codigo || '').trim(),
+        telefono: telefono !== undefined ? telefono : (datosAnteriores.telefono || ''),
         areas: areasLimpias,
         area: areasLimpias[0] || '', // compatibilidad temporal — se retira cuando todo el sistema lea `areas`
         areaActiva: areasLimpias.includes(areaActivaPrevia) ? areaActivaPrevia : (areasLimpias[0] || null),
@@ -9004,7 +9108,7 @@ async function guardarAcceso(correo, areas, codigo, docIdAnterior = null) {
 
       await registrarEnAuditoria(
         'editar_acceso', areasLimpias.join(', '), correoNorm, null, null,
-        { codigo, correoAnterior: docIdAnterior },
+        { codigo, telefono: telefono !== undefined ? telefono : (datosAnteriores.telefono || ''), correoAnterior: docIdAnterior },
         `Acceso con correo cambiado: ${docIdAnterior} → ${correoNorm} (áreas: ${areasLimpias.join(', ')})`
       );
 
@@ -9024,6 +9128,7 @@ async function guardarAcceso(correo, areas, codigo, docIdAnterior = null) {
     await window._fb.setDoc(accesoRef, {
       correo: correoNorm,
       codigo: String(codigo || '').trim(),
+      telefono: telefono !== undefined ? telefono : (existente.exists() ? (existente.data().telefono || '') : ''),
       areas: areasLimpias,
       area: areasLimpias[0] || '', // compatibilidad temporal — se retira cuando todo el sistema lea `areas`
       areaActiva: areasLimpias.includes(areaActivaPrevia) ? areaActivaPrevia : (areasLimpias[0] || null),
@@ -9034,7 +9139,7 @@ async function guardarAcceso(correo, areas, codigo, docIdAnterior = null) {
 
     await registrarEnAuditoria(
       existente.exists() ? 'editar_acceso' : 'crear_acceso',
-      areasLimpias.join(', '), correoNorm, null, null, { codigo },
+      areasLimpias.join(', '), correoNorm, null, null, { codigo, telefono: telefono !== undefined ? telefono : (existente.exists() ? (existente.data().telefono || '') : '') },
       existente.exists()
         ? `Acceso actualizado: ${correoNorm} → ${areasLimpias.join(', ')} (antes: ${areasAnteriores.join(', ') || '(sin área)'})`
         : `Nuevo acceso: ${correoNorm} → ${areasLimpias.join(', ')}`
@@ -9131,6 +9236,7 @@ async function importarAccesosDesdeArchivo(event) {
     const colCorreo = encabezado.findIndex(c => /CORREO|EMAIL|E-MAIL|MAIL/i.test(c));
     const colArea   = encabezado.findIndex(c => /ÁREA|AREA/i.test(c));
     const colCodigo = encabezado.findIndex(c => /C[OÓ]DIGO|^COD$|^C[OÓ]D\.?$/i.test(c));
+    const colTelefono = encabezado.findIndex(c => /TEL[ÉE]FONO|CELULAR|^TELF\.?$|^TEL\.?$|M[ÓO]VIL/i.test(c));
 
     if (colCorreo === -1 || colArea === -1) {
       toast('❌ No se encontró una columna de correo y/o de área en el archivo. Verifique los encabezados.', 'err');
@@ -9145,6 +9251,9 @@ async function importarAccesosDesdeArchivo(event) {
       const areaTexto = sanitizarNombreArea(String(fila[colArea] || '').trim());
       const areaReal = areasNorm.get(areaTexto.toLowerCase());
       const codigo = colCodigo !== -1 ? String(fila[colCodigo] || '').trim() : '';
+      // En la importación el teléfono es opcional (no bloquea la fila): si viene y es
+      // válido se guarda; si no viene o es inválido se conserva el que ya tenía.
+      const telefono = colTelefono !== -1 ? normalizarTelefonoEC(fila[colTelefono]) : '';
 
       let valido = true, motivo = '';
       let esAreaNueva = false;
@@ -9152,7 +9261,7 @@ async function importarAccesosDesdeArchivo(event) {
       else if (!areaTexto) { valido = false; motivo = 'Área vacía'; }
       else if (!areaReal) { esAreaNueva = true; motivo = `Área nueva — se creará en el catálogo`; }
 
-      return { correo, codigo, area: areaReal || areaTexto, valido, esAreaNueva, motivo };
+      return { correo, codigo, telefono, area: areaReal || areaTexto, valido, esAreaNueva, motivo };
     }).filter(f => f.correo || f.area); // descarta filas totalmente vacías al final del archivo
 
     mostrarPrevisualizacionImportarAccesos();
@@ -9234,6 +9343,7 @@ async function confirmarImportarAccesos() {
       await window._fb.setDoc(accesoRef, {
         correo: correoNorm,
         codigo: fila.codigo || (existente.exists() ? (existente.data().codigo || '') : ''),
+        telefono: fila.telefono || (existente.exists() ? (existente.data().telefono || '') : ''),
         areas: areasFinal,
         area: areasFinal[0] || '', // compatibilidad temporal
         areaActiva: areasFinal.includes(areaActivaPrevia) ? areaActivaPrevia : (areasFinal[0] || null),

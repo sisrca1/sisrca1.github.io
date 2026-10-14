@@ -1615,9 +1615,12 @@
     </div>
     <div class="modal-body">
       <div id="ml-aviso" class="ml-aviso" style="display:none"></div>
-      <p class="inf-intro">Pone el código elegido en las casillas <strong>vacías</strong> de todos los efectivos de esta área. Lo que ya está registrado no se cambia.</p>
+      <p class="inf-intro">Pone el código elegido en las casillas <strong>vacías</strong> de todos los efectivos de esta área, en el mes que elija. Lo que ya está registrado no se cambia.</p>
 
-      <label class="inf-etq" for="ml-codigo">Código que se aplicará</label>
+      <label class="inf-etq" for="ml-periodo">Mes a llenar</label>
+      <select id="ml-periodo" class="form-select" onchange="mlCambiarPeriodo(this.value)"></select>
+
+      <label class="inf-etq" for="ml-codigo" style="margin-top:10px;">Código que se aplicará</label>
       <select id="ml-codigo" class="form-select" onchange="mlActualizarResumen()"></select>
 
       <div class="inf-fila" style="margin-top:4px;">
@@ -1775,6 +1778,11 @@
         <label class="form-label">Código institucional</label>
         <input type="text" id="modal-acceso-codigo" class="form-select" placeholder="Ej. 6199" autocomplete="off" oninput="verificarCodigoAcceso()">
         <div id="modal-acceso-codigo-info" style="font-size:11px;margin-top:5px;min-height:14px;"></div>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Número de teléfono <span style="color:var(--red);">*</span></label>
+        <input type="tel" id="modal-acceso-telefono" class="form-select" placeholder="Ej. 0980379977" autocomplete="off" inputmode="numeric" maxlength="16">
+        <div style="font-size:11px;margin-top:5px;color:var(--txt3);">Celular de 10 dígitos que empiece con 09</div>
       </div>
       <div class="form-field">
         <label class="form-label">Áreas asignadas</label>
