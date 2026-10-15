@@ -3012,9 +3012,14 @@ function mlAtajo(tipo) {
   mlActualizarResumen();
 }
 
-function abrirModalLlenarMes() {
+function abrirModalLlenarMes(periodoInicial) {
   if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
-  if (!areaActual || !novedadesActuales || !Array.isArray(novedadesActuales.agentes) || !novedadesActuales.agentes.length) {
+  if (typeof periodoInicial !== 'string') periodoInicial = null;   // viene del onclick con el evento
+  if (!areaActual) {
+    toast('Primero abra un área.', 'err');
+    return;
+  }
+  if (!periodoInicial && (!novedadesActuales || !Array.isArray(novedadesActuales.agentes) || !novedadesActuales.agentes.length)) {
     toast('Primero abra un área que tenga efectivos cargados.', 'err');
     return;
   }
@@ -3034,11 +3039,12 @@ function abrirModalLlenarMes() {
     p = obtenerPeriodoAnterior(p);
   }
   selMes.innerHTML = opciones.join('');
-  selMes.value = mesActual;
+  const inicial = (periodoInicial && [...selMes.options].some(o => o.value === periodoInicial)) ? periodoInicial : mesActual;
+  selMes.value = inicial;
 
   $('ml-area').textContent = areaActual;
   $('modal-llenar-mes').style.display = 'flex';
-  mlCambiarPeriodo(mesActual);
+  mlCambiarPeriodo(inicial);
 }
 
 // Carga los datos del mes elegido (el mes en curso ya está en memoria; los
@@ -3051,7 +3057,7 @@ async function mlCambiarPeriodo(periodo) {
   const btn = $('btn-ml-aplicar');
   const aviso = $('ml-aviso');
 
-  if (periodo === mesActual) {
+  if (periodo === mesActual && novedadesActuales && Array.isArray(novedadesActuales.agentes)) {
     mlDoc = novedadesActuales;
   } else {
     mlDoc = null;
@@ -3139,9 +3145,14 @@ async function llenarMesCompleto() {
       `Llenado de mes por el administrador (${periodoAplicar}${esMesActual ? '' : ', mes anterior'}): ${codigo} en ${casillas} casillas vacías (${efectivos.size} efectivos), días ${r.desde} al ${r.hasta}` + (omitidos ? ` · ${omitidos} efectivo(s) sin marcar` : '')
     );
     cerrarModalLlenarMes();
-    if (esMesActual) {
+    if (esMesActual && mlDoc === novedadesActuales) {
       renderizarTablaNovedades(new Date().getDate());
       verificarDiasPendientes();
+    } else if (esMesActual) {
+      cargarNovedadesActuales();
+    } else if (cierreMesData && cierreMesData.periodo === periodoAplicar && cierreMesData.area === areaActual) {
+      // Se llenó el mes anterior que muestra el panel de cierre: se vuelve a cargar para ver los cambios
+      cargarNovedadesActuales();
     }
     toast(`✅ Se puso "${codigo}" en ${casillas} casillas vacías (${efectivos.size} efectivos).`, 'ok');
   } catch (e) {
@@ -3272,6 +3283,13 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
   }
 
   renderizarTablaSoloLectura($('tabla-cierre-mes'), data, periodo);
+
+  // Solo administrador: llenar las casillas vacías de este mes anterior
+  const btnLlenarCierre = $('btn-llenar-mes-cierre');
+  if (btnLlenarCierre) {
+    btnLlenarCierre.style.display = esAdmin() ? 'inline-flex' : 'none';
+    btnLlenarCierre.onclick = () => abrirModalLlenarMes(periodo);
+  }
 
   hide('cierre-mes-aviso-usuario');
   show('cierre-mes-form-admin');
