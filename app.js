@@ -95,6 +95,51 @@ const CODIGOS_DESC = {
   "FA":  "FRANCO FIN DE SEMANA"
 };
 
+/* ── Observaciones: lo que una persona escribe nunca se borra solo ──
+   La observación es un texto por efectivo y por mes. Puede ser:
+   · AUTOMÁTICA: la descripción del código ("VACACIONES", ...). El sistema la
+     actualiza sola cuando cambia el código.
+   · ESCRITA A MANO: la persona la tecleó en el modal de edición. Ningún proceso
+     automático (llenar S/N de un día, llenar mes, acción rápida, edición de
+     varios días, combinar duplicados) la modifica ni la borra: solo cambia si
+     la persona la edita en el modal.
+   Se marca con `observacionManual`. En registros anteriores a esa marca se
+   considera escrito a mano todo texto que no coincida con la descripción de
+   un código. */
+const OBSERVACIONES_AUTOMATICAS = new Set(Object.values(CODIGOS_DESC));
+
+function observacionProtegida(ag) {
+  const txt = String((ag && ag.observaciones) || '').trim();
+  if (!txt) return false;
+  if (ag.observacionManual === true) return true;
+  if (ag.observacionManual === false) return false;
+  return !OBSERVACIONES_AUTOMATICAS.has(txt);
+}
+
+// Texto automático según el código aplicado. No toca una observación escrita a mano.
+function actualizarObservacionAutomatica(ag, codigo) {
+  if (!ag || observacionProtegida(ag)) return;
+  const actual = String(ag.observaciones || '').trim();
+  // "Sin novedad" no pisa un texto automático que ya existe (p. ej. "VACACIONES")
+  if (actual && codigo === 'S/N') return;
+  ag.observaciones = CODIGOS_DESC[codigo] || '';
+  ag.observacionManual = false;
+}
+
+// Observación que queda al guardar el modal de edición de novedad.
+function aplicarObservacionDesdeModal(ag, textoCampo, codigo) {
+  const texto = String(textoCampo || '').trim();
+  if (texto && !OBSERVACIONES_AUTOMATICAS.has(texto)) {
+    ag.observaciones = texto;
+    ag.observacionManual = true;                    // escrita por una persona: queda protegida
+    return;
+  }
+  // Campo vacío o con un texto automático
+  if (observacionProtegida(ag)) ag.observaciones = ''; // la persona quitó su texto a propósito
+  actualizarObservacionAutomatica(ag, codigo);
+}
+/* fin helpers de observaciones */
+
 let db, auth, usuario = null;
 let archivoSeleccionado  = null;
 let informeSeleccionado  = null;
@@ -2412,10 +2457,8 @@ async function aplicarCodigoRapido(idx, dia, codigo) {
 
   if (!agente.novedadesPorDia) agente.novedadesPorDia = {};
   agente.novedadesPorDia[String(dia)] = codigo;
-  // Solo autocompletar con la descripción del código si aún no hay una observación personalizada
-  if (!agente.observaciones) {
-    agente.observaciones = CODIGOS_DESC[codigo] || '';
-  }
+  // Una observación escrita a mano no se toca; el texto automático sigue al código
+  actualizarObservacionAutomatica(agente, codigo);
   actualizarDiaCompletado(dia);
 
   try {
@@ -2488,14 +2531,19 @@ async function combinarDuplicadosArea() {
           if (val && !novedadesPorDiaUnidas[dia]) novedadesPorDiaUnidas[dia] = val;
         });
       });
-      const observacionUnida = grupo.map(g => g.observaciones).find(o => o) || '';
+      // Las observaciones escritas a mano se conservan todas (unidas); si no hay, la primera automática
+      const obsProtegidas = [...new Set(grupo.filter(observacionProtegida).map(g => String(g.observaciones).trim()))];
+      const observacionUnida = obsProtegidas.length
+        ? obsProtegidas.join(' / ')
+        : (grupo.map(g => g.observaciones).find(o => o) || '');
 
       return {
         codigo: base.codigo,
         grado: base.grado,
         apellidosNombres: base.apellidosNombres,
         novedadesPorDia: novedadesPorDiaUnidas,
-        observaciones: observacionUnida
+        observaciones: observacionUnida,
+        observacionManual: obsProtegidas.length > 0
       };
     });
 
@@ -2621,10 +2669,13 @@ function poblarSelectCodigos(select) {
 function actualizarObsSegunCodigo() {
   const codigo = $('modal-novedad-codigo').value;
   const obs = $('modal-novedad-obs');
-  // No borra lo que el usuario ya escribió o lo que venía cargado — solo
-  // sugiere la descripción por defecto cuando el campo está vacío.
-  if (obs.value.trim()) return;
-  obs.value = codigo ? (CODIGOS_DESC[codigo] || '') : '';
+  // Nunca toca un texto escrito a mano. Solo sugiere la descripción del código
+  // cuando el campo está vacío o tiene un texto automático.
+  const actual = obs.value.trim();
+  if (!codigo) return;
+  if (actual && !OBSERVACIONES_AUTOMATICAS.has(actual)) return;
+  if (actual && codigo === 'S/N') return;   // "sin novedad" no pisa un texto automático existente
+  obs.value = CODIGOS_DESC[codigo] || '';
 }
 
 function abrirModalEditarNovedad(agente, dia, idx) {
@@ -2660,7 +2711,9 @@ function abrirModalEditarNovedadDias(agente, dias, idx) {
     // Con varios días a la vez puede haber códigos distintos entre ellos —
     // arranca vacío en vez de precargar el de uno solo.
     codigo.value = '';
-    obs.value = '';
+    // La observación es del efectivo (no de cada día): se muestra siempre, para que
+    // al guardar no se reemplace sin que la persona la vea.
+    obs.value = agente.observaciones || '';
   }
 
   hide('modal-novedad-error');
@@ -2707,7 +2760,7 @@ async function guardarNovedad() {
     return;
   }
   
-  const obs = $('modal-novedad-obs').value.trim() || CODIGOS_DESC[codigoNorm] || '';
+  const textoCampoObs = $('modal-novedad-obs').value.trim();
   const diasAEditar = (modalDiasEdicion && modalDiasEdicion.length) ? modalDiasEdicion : [modalDiaEdicion];
   const descDias = diasAEditar.length > 1
     ? `Días ${diasAEditar[0]}-${diasAEditar[diasAEditar.length - 1]} (${diasAEditar.length} días)`
@@ -2733,7 +2786,10 @@ async function guardarNovedad() {
     modalAgenteEdicion.novedadesPorDia = {};
   }
   diasAEditar.forEach(d => { modalAgenteEdicion.novedadesPorDia[String(d)] = codigoNorm; });
-  modalAgenteEdicion.observaciones = obs;
+  const obsAnterior = String(modalAgenteEdicion.observaciones || '');
+  aplicarObservacionDesdeModal(modalAgenteEdicion, textoCampoObs, codigoNorm);
+  const obs = modalAgenteEdicion.observaciones || '';
+  const detalleObs = (obsAnterior && obsAnterior !== obs) ? { observacionAnterior: obsAnterior } : {};
 
   // Guardar en Firestore
   try {
@@ -2754,7 +2810,7 @@ async function guardarNovedad() {
 
       await registrarEnAuditoria(
         'modificar_novedad_mes_cerrado', area, usuario.email, diasAEditar.length === 1 ? diasAEditar[0] : null, periodo,
-        { codigo: codigoNorm, observaciones: obs, dias: diasAEditar },
+        { codigo: codigoNorm, observaciones: obs, dias: diasAEditar, ...detalleObs },
         `Corrección en mes anterior: ${modalAgenteEdicion.apellidosNombres} - ${descDias} - ${codigoNorm}`
       );
 
@@ -2788,7 +2844,7 @@ async function guardarNovedad() {
       usuario.email,
       diasAEditar.length === 1 ? diasAEditar[0] : null,
       mesActual,
-      { codigo: codigoNorm, observaciones: obs, dias: diasAEditar },
+      { codigo: codigoNorm, observaciones: obs, dias: diasAEditar, ...detalleObs },
       `Modificación: ${modalAgenteEdicion.apellidosNombres} - ${descDias} - ${codigoNorm}`
     );
     
@@ -2826,7 +2882,7 @@ async function llenarSinNovedadDia(dia) {
       novedadesActuales.agentes.forEach(agente => {
         if (!agente.novedadesPorDia) agente.novedadesPorDia = {};
         agente.novedadesPorDia[String(dia)] = 'S/N';
-        agente.observaciones = CODIGOS_DESC['S/N'];
+        actualizarObservacionAutomatica(agente, 'S/N');
       });
     }
     actualizarDiaCompletado(dia);
@@ -3127,7 +3183,7 @@ async function llenarMesCompleto() {
       }
       if (tocado) {
         efectivos.add(i);
-        if (!ag.observaciones) ag.observaciones = CODIGOS_DESC[codigo] || '';
+        actualizarObservacionAutomatica(ag, codigo);
       }
     });
     if (!casillas) { toast('No había casillas vacías: alguien ya las había llenado.', 'err'); mlActualizarResumen(); return; }
@@ -4146,7 +4202,7 @@ async function seleccionarDiaColumnaCierre(dia) {
     (data.agentes || []).forEach(agente => {
       if (!agente.novedadesPorDia) agente.novedadesPorDia = {};
       agente.novedadesPorDia[String(dia)] = 'S/N';
-      agente.observaciones = CODIGOS_DESC['S/N'];
+      actualizarObservacionAutomatica(agente, 'S/N');
     });
     const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
     await window._fb.updateDoc(novedadesRef, {
