@@ -68,6 +68,24 @@ body.dark-mode .info-badge{
   border:1px solid var(--border);
 }
 
+/* Tabla principal de novedades: la lista se desplaza dentro de su propia caja,
+   así la barra de encabezado (Nº, Código, días 1-31, Observación...) queda fija
+   arriba mientras se baja por los efectivos, y la barra de desplazamiento
+   horizontal de los días siempre está a la vista. 54px = barra de navegación. */
+#tabla-novedades-container{
+  max-height:calc(100vh - 110px);
+  min-height:260px;
+  overflow:auto;
+}
+
+#tabla-novedades-container .tabla-novedades th{
+  position:sticky;
+  top:0;
+  z-index:11;
+  /* con border-collapse el borde inferior no acompaña a la celda fija: se dibuja con sombra */
+  box-shadow:0 2px 0 var(--blue-m);
+}
+
 .tabla-novedades{
   width:100%;
   border-collapse:collapse;
