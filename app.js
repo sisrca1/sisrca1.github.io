@@ -11120,6 +11120,58 @@ async function cargarResumenGeneral(prefix = 'resumen') {
   resumenGeneralCache = { filasPorArea, totales, periodo, detalleAusenciasX };
 }
 
+/* ── Exportar a Excel solo los NOMBRES de las áreas del catálogo del sistema ──
+   Un único archivo con una columna "ÁREA", ordenada alfabéticamente y sin repetidos.
+   Solo lee el catálogo: no modifica nada. */
+async function exportarNombresAreasExcel() {
+  if (!(esAdmin() || tienePermisoAccion('resumen_exportar') || tienePermisoAccion('resumen_ver'))) {
+    toast('❌ No tiene permiso para exportar', 'err');
+    return;
+  }
+  try {
+    const areas = [...new Set((await obtenerAreasNovedades()).map(a => String(a || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base', numeric: true }));
+    if (!areas.length) { toast('No hay áreas registradas en el sistema', 'err'); return; }
+
+    if (!window.ExcelJS) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+        s.onload = res; s.onerror = rej; document.head.appendChild(s);
+      });
+    }
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Áreas');
+    ws.columns = [{ header: 'ÁREA', key: 'area', width: Math.min(80, Math.max(20, ...areas.map(a => a.length + 4))) }];
+    areas.forEach(a => ws.addRow({ area: a }));
+
+    const cab = ws.getRow(1);
+    cab.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cab.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } };
+    cab.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.autoFilter = { from: 'A1', to: 'A1' };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `AREAS_DEL_SISTEMA_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+    toast(`✅ ${areas.length} áreas exportadas a Excel`, 'ok');
+  } catch (e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
+}
+window.exportarNombresAreasExcel = exportarNombresAreasExcel;
+
 async function exportarResumenGeneralExcel() {
   if (!resumenGeneralCache || !resumenGeneralCache.filasPorArea || resumenGeneralCache.filasPorArea.length === 0) {
     toast('Primero genere el resumen (botón "Generar resumen")', 'err');

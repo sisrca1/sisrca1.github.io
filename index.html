@@ -582,6 +582,7 @@
             </div>
             <button class="btn-acc btn-acc-blue" onclick="cargarResumenGeneral('rep-resumen')" style="margin-top:18px;">Generar resumen</button>
             <button class="btn-acc btn-acc-green" onclick="exportarResumenGeneralExcel()" style="margin-top:18px;">📥 Exportar a Excel</button>
+            <button class="btn-acc btn-acc-ghost" onclick="exportarNombresAreasExcel()" style="margin-top:18px;" title="Un Excel con solo el nombre de cada área del sistema">📋 Exportar nombres de las áreas</button>
           </div>
           <div style="overflow-x:auto">
             <table>
@@ -1179,6 +1180,7 @@
             </div>
             <button class="btn-acc btn-acc-blue" onclick="cargarResumenGeneral()" style="margin-top:18px;" data-permiso="resumen_ver,resumen_exportar">Generar resumen</button>
             <button class="btn-acc btn-acc-green" onclick="exportarResumenGeneralExcel()" style="margin-top:18px;" data-permiso="resumen_exportar">📥 Exportar a Excel</button>
+            <button class="btn-acc btn-acc-ghost" onclick="exportarNombresAreasExcel()" style="margin-top:18px;" data-permiso="resumen_exportar" title="Un Excel con solo el nombre de cada área del sistema">📋 Exportar nombres de las áreas</button>
           </div>
           <div id="resumen-areas-sin-asignar" class="info-badge" style="display:none;margin:0 20px 16px;align-items:center;gap:8px;flex-wrap:wrap;"></div>
         </div>
