@@ -4706,8 +4706,9 @@ async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsab
     const fila = [idx + 1, agente.codigo || '', agente.grado || '', agente.apellidosNombres || ''];
     for (let d = 1; d <= totalDias; d++) {
       const valorDia = ((agente.novedadesPorDia && agente.novedadesPorDia[String(d)]) || '').trim();
-      const sinNovedad = valorDia === '' || valorDia.toUpperCase() === 'S/N';
-      fila.push(sinNovedad ? '' : valorDia);
+      // "Sin novedad" se imprime como un punto (la nomenclatura lo explica); un día
+      // sin llenar queda vacío, así ya no se confunde con "sin novedad".
+      fila.push(valorDia.toUpperCase() === 'S/N' ? '•' : valorDia);
     }
     fila.push(agente.observaciones || '');
     return fila;
@@ -4750,12 +4751,22 @@ async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsab
       const idx = hookData.column.index;
       if (hookData.section === 'body' && idx >= 4 && idx < 4 + totalDias) {
         hookData.cell.styles.fillColor = AMARILLO;
+        // El punto de "sin novedad" se dibuja como un círculo (ver didDrawCell): así se ve
+        // nítido al imprimir y no agranda las filas, como pasaría con una letra más grande.
+        if (hookData.cell.raw === '•') hookData.cell.text = [''];
       }
       // Tamaño de letra fijo y estándar para Apellidos y Nombres (columna 3).
       // Los nombres largos se ajustan a dos líneas dentro de la celda
       // (overflow:'linebreak' ya lo maneja autoTable) en vez de achicar la fuente.
       if (hookData.section === 'body' && idx === 3) {
         hookData.cell.styles.fontSize = 6;
+      }
+    },
+    didDrawCell: (hookData) => {
+      const idx = hookData.column.index;
+      if (hookData.section === 'body' && idx >= 4 && idx < 4 + totalDias && hookData.cell.raw === '•') {
+        doc.setFillColor(0, 0, 0);
+        doc.circle(hookData.cell.x + hookData.cell.width / 2, hookData.cell.y + hookData.cell.height / 2, 0.55, 'F');
       }
     },
     didDrawPage: () => {
@@ -4797,9 +4808,11 @@ async function exportarNovedadesPDF(data, area, periodo, elaboradoPor, responsab
     doc.setFillColor(...VERDE_CLARO);
     doc.rect(10, y, anchoPagina - 20, altoFilaNom, 'FD');
     doc.setFont(undefined, 'bold');
-    doc.text(c, 12, y + 3.2);
+    // En el PDF "S/N" se imprime como un punto: la leyenda lo aclara
+    if (c === 'S/N') { doc.setFillColor(0, 0, 0); doc.circle(13.2, y + altoFilaNom / 2, 0.55, 'F'); }
+    else doc.text(c, 12, y + 3.2);
     doc.setFont(undefined, 'normal');
-    doc.text(`— ${CODIGOS_DESC[c]}`, 24, y + 3.2);
+    doc.text(c === 'S/N' ? '— SIN NOVEDAD (S/N)' : `— ${CODIGOS_DESC[c]}`, 24, y + 3.2);
     y += altoFilaNom;
   });
 
