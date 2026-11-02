@@ -1717,7 +1717,7 @@ async function cargarNovedadesActuales() {
     // anterior. Mientras esté activa no se bloquea el mes en curso.
     const enProrroga = cierrePendiente && !!(docAnterior.data().prorroga && docAnterior.data().prorroga.activa);
 
-    // Desde el día 2 el mes anterior deja de verse para las áreas: solo ven el mes en
+    // Pasado el plazo (por defecto el día 1) el mes anterior deja de verse para las áreas: solo ven el mes en
     // curso. Lo siguen viendo el administrador y el supervisor, y el área a la que el
     // administrador le dio una prórroga o le repuso los intentos del informe.
     const plazoMesAnterior = plazoLlenadoMesAnteriorVigente(periodoAnterior);
@@ -1725,7 +1725,7 @@ async function cargarNovedadesActuales() {
     const veMesAnterior    = exentoDeBloqueo || plazoMesAnterior || enProrroga || reposicionHoy;
 
     // El bloqueo del mes en curso solo actúa mientras el área aún puede ver y
-    // completar el mes anterior (el día 1); después ya no tendría cómo desbloquearse.
+    // completar el mes anterior (hasta el último día del plazo); después ya no tendría cómo desbloquearse.
     if (cierrePendiente && bloqueoActivo && !exentoDeBloqueo && !enProrroga && plazoMesAnterior) {
       mostrarCierreMes(areaActual, periodoAnterior, docAnterior.data(), true, cfgCierreEfectiva);
       return;
@@ -3299,7 +3299,7 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
   if (textoEl) {
     if (yaCerrado) {
       if (intentosRestantes > 0) {
-        textoEl.textContent = `El informe de ${obtenerNombreMes(periodo.split('-')[1])} ${periodo.split('-')[0]} ya fue generado. Si necesita volver a descargarlo, dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'} de generación${plazoReporteVigente(data, periodo) ? ', y solo hasta las 23:59 de hoy' : ''}. Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.`;
+        textoEl.textContent = `El informe de ${obtenerNombreMes(periodo.split('-')[1])} ${periodo.split('-')[0]} ya fue generado. Si necesita volver a descargarlo, dispone de ${intentosRestantes} ${intentosRestantes === 1 ? 'intento adicional' : 'intentos adicionales'} de generación${plazoReporteVigente(data, periodo) ? ', y solo ' + textoLimitePlazoMesAnterior() : ''}. Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.`;
       } else {
         textoEl.textContent = plazoReporteVencido
           ? 'El plazo para volver a generar este informe terminó. Por favor, comuníquese con soporte técnico para continuar.'
@@ -3309,7 +3309,7 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
       textoEl.textContent = 'El administrador habilitó una prórroga para completar el mes anterior. Edite los días pendientes en la tabla (clic en una celda), luego indique "Elaborado por" y "Responsable" y genere el informe completo. Mientras tanto puede seguir registrando el mes en curso con normalidad, más abajo.';
     } else if (bloqueante) {
       textoEl.textContent = plazoVigente
-        ? 'Debe completar y generar el informe del mes anterior para continuar registrando el mes en curso. Puede editar cualquier día del mes anterior en la tabla de abajo hasta las 23:59 de hoy; después ya no podrá corregir novedades.'
+        ? 'Debe completar y generar el informe del mes anterior para continuar registrando el mes en curso. Puede editar cualquier día del mes anterior en la tabla de abajo ' + textoLimitePlazoMesAnterior() + '; después ya no podrá corregir novedades.'
         : 'Debe generar el informe del mes anterior para continuar registrando el mes en curso. El plazo para corregir novedades del mes anterior ya terminó.';
     } else {
       const diaBloqueo = cfg ? cfg.diaBloqueo : null;
@@ -3321,7 +3321,7 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
         else if (restantes === 1) plazo = ` Tiene plazo hasta el día ${diaBloqueo} de este mes (falta 1 día).`;
         else                      plazo = ` El plazo vence hoy, día ${diaBloqueo}.`;
       }
-      textoEl.textContent = `El informe del mes anterior ya está habilitado: puede generarlo ahora si ya lo tiene listo.${plazo} Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.${plazoVigente ? ' Puede completar los días pendientes del mes anterior en «Ver detalle» solo hasta las 23:59 de hoy.' : ''}`;
+      textoEl.textContent = `El informe del mes anterior ya está habilitado: puede generarlo ahora si ya lo tiene listo.${plazo} Mientras tanto, siga registrando el mes en curso con normalidad, más abajo.${plazoVigente ? ' Puede completar los días pendientes del mes anterior en «Ver detalle» solo ' + textoLimitePlazoMesAnterior() + '.' : ''}`;
     }
   }
 
@@ -3414,10 +3414,17 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
     const medianoche = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() + 1, 0, 0, 1);
     timerPlazoCierre = setTimeout(() => {
       if (!cierreMesData) return;
-      toast(cierreMesData.yaCerrado
-        ? '⏰ Terminó el plazo para volver a generar el reporte'
-        : '⏰ Terminó el plazo para completar el mes anterior', 'err');
-      cargarNovedadesActuales(); // vuelve a evaluar: desde el día 2 solo queda el mes en curso
+      // Con un plazo de varios días, la medianoche no siempre lo termina: solo se
+      // avisa si de verdad venció; en cualquier caso se reevalúa la pantalla.
+      const sigueVigente = cierreMesData.yaCerrado
+        ? plazoReporteVigente(cierreMesData.data, cierreMesData.periodo)
+        : plazoLlenadoMesAnteriorVigente(cierreMesData.periodo);
+      if (!sigueVigente) {
+        toast(cierreMesData.yaCerrado
+          ? '⏰ Terminó el plazo para volver a generar el reporte'
+          : '⏰ Terminó el plazo para completar el mes anterior', 'err');
+      }
+      cargarNovedadesActuales(); // vuelve a evaluar: pasado el plazo solo queda el mes en curso
     }, medianoche - ahora);
   }
 
@@ -3960,7 +3967,7 @@ function reposicionDeReporteVigente(data) {
   return data.reporteReabiertoFecha === `${f.periodo}-${String(f.dia).padStart(2, '0')}`;
 }
 
-// Hay ventana para volver a generar el informe: el día 1 del mes siguiente, o el día
+// Hay ventana para volver a generar el informe: hasta el último día del plazo configurado, o el día
 // en que el administrador repuso los intentos. Ambas terminan a las 23:59.
 function plazoReporteVigente(data, periodo) {
   return plazoLlenadoMesAnteriorVigente(periodo) || reposicionDeReporteVigente(data);
@@ -3976,11 +3983,32 @@ function intentosRestantesDeReporte(data, periodo) {
     : 0;
 }
 
-// El mes anterior solo se puede llenar o corregir durante el DÍA 1 del mes siguiente
-// (hasta las 23:59). Pasada esa hora ya no hay chance de corregir novedades.
+// El mes anterior solo se puede llenar o corregir hasta el día de bloqueo configurado
+// del mes siguiente (por defecto el día 1), hasta las 23:59. Pasada esa hora ya no
+// hay chance de corregir novedades.
 function plazoLlenadoMesAnteriorVigente(periodo) {
   const hoy = obtenerFechaParts();
-  return obtenerPeriodoSiguiente(periodo) === hoy.periodo && hoy.dia === 1;
+  return obtenerPeriodoSiguiente(periodo) === hoy.periodo && hoy.dia <= diaFinPlazoMesAnterior(hoy.periodo);
+}
+
+// Último día del mes en curso (inclusive, hasta las 23:59) en que el área aún puede
+// ver, completar y generar el informe del mes anterior. Es el día de bloqueo que
+// define el administrador: ese día el área queda bloqueada hasta generar el informe
+// —y todavía puede hacerlo—; al día siguiente el mes anterior deja de verse.
+// Con los valores por defecto (1 y 1) el plazo es solo el día 1, como siempre.
+// Si el mes es más corto que el día configurado, se usa su último día real.
+function diaFinPlazoMesAnterior(periodoActual) {
+  const cfg = configCierreCache || CONFIG_CIERRE_DEFAULT;
+  const dia = Math.max(cfg.diaBloqueo, cfg.diaHabilitacion, 1);
+  return Math.min(dia, diasEnMes(periodoActual));
+}
+
+// "hasta las 23:59 de hoy" cuando hoy es el último día; si todavía quedan días,
+// se dice cuál es el último para que el secretario no se confunda.
+function textoLimitePlazoMesAnterior() {
+  const hoy = obtenerFechaParts();
+  const fin = diaFinPlazoMesAnterior(hoy.periodo);
+  return hoy.dia >= fin ? 'hasta las 23:59 de hoy' : `hasta las 23:59 del día ${fin}`;
 }
 
 // Mientras el informe NO se haya generado y el plazo esté vigente, el área tiene el
@@ -4026,7 +4054,7 @@ function actualizarEstadoPendientesCierre() {
   if (avisoPend) {
     if (pendientes.length) {
       avisoPend.textContent = plazoLlenadoMesAnteriorVigente(periodo)
-        ? `Faltan días por completar: ${pendientes.join(', ')}. El informe se podrá generar cuando no quede ningún día vacío. Complételos HOY, hasta las 23:59, en la tabla: clic en una celda, arrastre sobre la fila de un efectivo para elegir varios días, o clic en el número del día para marcar "Sin novedad" a todos. Después de esa hora ya no se podrán corregir novedades.`
+        ? `Faltan días por completar: ${pendientes.join(', ')}. El informe se podrá generar cuando no quede ningún día vacío. Complételos ${textoLimitePlazoMesAnterior()}, en la tabla: clic en una celda, arrastre sobre la fila de un efectivo para elegir varios días, o clic en el número del día para marcar "Sin novedad" a todos. Pasado ese plazo ya no se podrán corregir novedades.`
         : `Faltan días por completar: ${pendientes.join(', ')}. El plazo para completar el mes anterior ya terminó y el informe no se puede generar con días vacíos. Comuníquese con el administrador.`;
       avisoPend.style.display = 'block';
     } else {
@@ -5101,11 +5129,25 @@ function nombreBaseEnvio(areaVal) {
 
 /* ══════════════════════════════════
    LÓGICA DE PLAZO / ACTA OBLIGATORIA
-   Plazo: día 2 del mes. Después del día 2 es tardío y
-   se vuelven obligatorios los tres archivos.
+   Plazo: hasta el último día del plazo de cierre (mínimo el día 2, como
+   siempre). Después es tardío y se vuelven obligatorios los tres archivos.
 ══════════════════════════════════ */
+// Último día en que el informe todavía es «de Entrega». Sigue el plazo de cierre
+// que define el administrador, pero nunca antes del día 2 (valor histórico), de
+// modo que con la configuración por defecto (1 y 1) nada cambia.
+let _configCierreSolicitada = false;
+function diaLimiteInformeEntrega() {
+  if (!configCierreCache && !_configCierreSolicitada) {
+    // Aún no se leyó la configuración (p. ej. se entró directo a Envíos): se pide
+    // una vez y se repinta el botón cuando llegue.
+    _configCierreSolicitada = true;
+    obtenerConfigCierre().then(() => { try { actualizarBotonEnviar(); } catch(e) {} }).catch(() => {});
+  }
+  return Math.max(2, diaFinPlazoMesAnterior(obtenerFechaParts().periodo));
+}
+
 function actaEsObligatoriaHoy() {
-  return new Date().getDate() > 2;
+  return obtenerFechaParts().dia > diaLimiteInformeEntrega();
 }
 
 function infoPlazoPorFecha() {
@@ -5115,8 +5157,9 @@ function infoPlazoPorFecha() {
   const nombreMesPasado = mesPasado.toLocaleDateString('es-EC',
     { month:'long', year:'numeric', timeZone:'America/Guayaquil' });
 
-  if (dia <= 2) {
-    const diasRestantes = 2 - dia;
+  const limite = diaLimiteInformeEntrega();
+  if (dia <= limite) {
+    const diasRestantes = limite - dia;
     return {
       tardio: false,
       mesReporte: nombreMesPasado,
@@ -5125,7 +5168,7 @@ function infoPlazoPorFecha() {
         : `Envío del reporte de ${nombreMesPasado} · te quedan ${diasRestantes} día${diasRestantes!==1?'s':''} sin acta`
     };
   } else {
-    const diasRetraso = dia - 2;
+    const diasRetraso = dia - limite;
     return {
       tardio: true,
       mesReporte: nombreMesPasado,
@@ -5149,10 +5192,11 @@ function actualizarContadorActa() {
 
   const actaObligatoria = actaEsObligatoriaHoy();
   const dia = new Date().getDate();
+  const limiteEntrega = diaLimiteInformeEntrega();
 
   if (!actaObligatoria) {
-    /* Antes del día 2: mostrar cuenta regresiva, bloquear dropzone */
-    const diasRestantes = 2 - dia;
+    /* Dentro del plazo: mostrar cuenta regresiva, bloquear dropzone */
+    const diasRestantes = limiteEntrega - dia;
     cBox.style.background   = '#fef2f2';
     cBox.style.borderColor  = '#fecaca';
     cBox.querySelector('svg').style.stroke = '#ef4444';
@@ -5171,8 +5215,8 @@ function actualizarContadorActa() {
       lbl.style.background = '#ef4444';
     }
   } else {
-    /* Después del día 2: habilitado y en rojo urgente */
-    const diasRetraso = dia - 2;
+    /* Pasado el plazo: habilitado y en rojo urgente */
+    const diasRetraso = dia - limiteEntrega;
     cBox.style.background   = '#fff1f2';
     cBox.style.borderColor  = '#fda4af';
     cBox.querySelector('svg').style.stroke = '#dc2626';
@@ -5218,7 +5262,7 @@ function actualizarBotonEnviar() {
     else if (!informeSeleccionado)
       hint.textContent = '⚠️ El Informe de Entrega PDF es obligatorio';
     else if (!actaSeleccionada && actaObligatoria)
-      hint.textContent = '⚠️ El Informe de Atraso es obligatorio — pasó el día 2';
+      hint.textContent = '⚠️ El Informe de Atraso es obligatorio — pasó el día ' + diaLimiteInformeEntrega();
     else
       hint.textContent = '';
   }

@@ -1118,7 +1118,7 @@
           <div style="padding:20px;">
             <div class="sec-titulo">🔁 Reponer intentos de generación de reporte</div>
             <p style="color:var(--txt2);margin-bottom:16px;font-size:12px;">
-              Cada área puede volver a generar su informe hasta 3 veces en total, y solo hasta las 23:59 del día 1 del mes siguiente; pasada esa hora los intentos que sobraban se pierden. Use esto para devolverle el acceso, con los 3 intentos completos, a un área cuyo plazo venció o que ya agotó sus intentos: la reposición vale solo hasta las 23:59 del día en que usted la hace, y al día siguiente el contador vuelve a cero.
+              Cada área puede volver a generar su informe hasta 3 veces en total, y solo hasta las 23:59 del último día del plazo del mes siguiente (por defecto el día 1); pasada esa hora los intentos que sobraban se pierden. Use esto para devolverle el acceso, con los 3 intentos completos, a un área cuyo plazo venció o que ya agotó sus intentos: la reposición vale solo hasta las 23:59 del día en que usted la hace, y al día siguiente el contador vuelve a cero.
             </p>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;">
               <div class="form-field" style="margin-bottom:0;">
@@ -1307,7 +1307,7 @@
               <label class="form-label">Día que bloquea el registro</label>
               <input type="number" id="config-dia-bloqueo" class="form-select" min="1" max="31" step="1" value="1">
               <p style="font-size:11px;color:var(--txt2);margin-top:4px;">
-                Si al llegar este día el informe no se generó, el área queda bloqueada hasta cerrar el mes anterior. Desde el día 2 el mes anterior ya no se muestra a las áreas, así que este bloqueo solo actúa el día 1: deje 1 para bloquear ese día, o 2 o más para no bloquear a nadie.
+                Si al llegar este día el informe no se generó, el área queda bloqueada hasta cerrar el mes anterior. Este día es también el <b>último plazo</b>: el área todavía puede llenar el mes anterior y generar el informe hasta las 23:59 de ese día (ese día queda bloqueada hasta que lo genere); al día siguiente el mes anterior deja de verse. Ejemplo: con 5, el área tiene del 1 al 5. Con 1, solo el día 1.
                 No puede ser anterior al día de habilitación.
               </p>
             </div>
