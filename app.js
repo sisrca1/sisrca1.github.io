@@ -3390,14 +3390,25 @@ function mostrarCierreMes(area, periodo, data, bloqueante = true, cfg = null) {
       btnPrincipal.style.opacity = agotado ? '0.5' : '';
       btnPrincipal.style.cursor = agotado ? 'not-allowed' : '';
     }
-    // "Elaborado por" y "Responsable" quedan fijos al cierre original: una
-    // regeneración entrega el mismo informe, no abre un cierre nuevo.
-    $('cierre-elaborado-por').style.pointerEvents = 'none';
-    $('cierre-elaborado-por').style.opacity = '0.7';
-    $('cierre-responsable').style.pointerEvents = 'none';
-    $('cierre-responsable').style.opacity = '0.7';
+    // "Elaborado por" y "Responsable": mientras queden intentos (y el plazo esté
+    // vigente) se pueden corregir al volver a generar; los nuevos nombres pasan a
+    // ser los oficiales del mes. Sin intentos quedan fijos.
+    const puedeCorregirFirmas = intentosRestantes > 0;
+    ['cierre-elaborado-por', 'cierre-responsable'].forEach(id => {
+      const el = $(id);
+      el.style.pointerEvents = puedeCorregirFirmas ? '' : 'none';
+      el.style.opacity = puedeCorregirFirmas ? '' : '0.7';
+    });
+    if (descForm && puedeCorregirFirmas) {
+      if (descForm.dataset.textoOriginal === undefined) descForm.dataset.textoOriginal = descForm.textContent;
+      descForm.style.display = 'block';
+      descForm.textContent = 'Si se equivocó de persona, puede corregir «Elaborado por» y «Responsable» antes de volver a generar. Los nombres que deje aquí serán los oficiales de este informe.';
+    }
   } else {
-    if (descForm) descForm.style.display = 'block';
+    if (descForm) {
+      if (descForm.dataset.textoOriginal !== undefined) descForm.textContent = descForm.dataset.textoOriginal;
+      descForm.style.display = 'block';
+    }
     if (avisoIntentos) avisoIntentos.style.display = 'none';
     if (btnPrincipalTxt) btnPrincipalTxt.textContent = 'Cerrar mes y exportar (Excel + PDF)';
     if (btnPrincipal) { btnPrincipal.disabled = false; btnPrincipal.style.opacity = ''; btnPrincipal.style.cursor = ''; }
@@ -4275,8 +4286,9 @@ async function cerrarYExportarMes() {
   const { area, periodo, data, yaCerrado } = cierreMesData;
 
   // Caso 1: el mes ya estaba cerrado — esto es una REGENERACIÓN del mismo
-  // informe, no un cierre nuevo. No se tocan "elaboradoPor"/"responsable"
-  // ni la fecha de cierre; solo se reexportan los archivos y sube el contador.
+  // informe, no un cierre nuevo. No se toca la fecha de cierre; se reexportan los
+  // archivos, sube el contador y, si el secretario corrigió "Elaborado por" o
+  // "Responsable", los nuevos nombres quedan como oficiales (con auditoría).
   if (yaCerrado) {
       if (intentosRestantesDeReporte(data, periodo) <= 0) {
       toast(intentosUsadosDeReporte(data) < MAX_INTENTOS_REPORTE
@@ -4284,19 +4296,41 @@ async function cerrarYExportarMes() {
         : '❌ Ha alcanzado el máximo de intentos permitidos. Comuníquese con soporte técnico.', 'err');
       return;
     }
+    // Los nombres de las firmas se pueden corregir al regenerar (mientras queden
+    // intentos). Se validan ANTES de gastar el intento.
+    const nuevoElaborado  = $('cierre-elaborado-por').value.trim();
+    const nuevoResponsable = $('cierre-responsable').value.trim();
+    if (!nuevoElaborado || !nuevoResponsable) {
+      toast('❌ "Elaborado por" y "Responsable" no pueden quedar vacíos', 'err');
+      return;
+    }
+    const elaboradoAnterior   = data.elaboradoPor || '';
+    const responsableAnterior = data.responsable || '';
+    const cambioFirmas = nuevoElaborado !== elaboradoAnterior || nuevoResponsable !== responsableAnterior;
+
     try {
       toast('⏳ Generando reporte...', 'ok');
       const nuevoConteo = intentosUsadosDeReporte(data) + 1;
       const novedadesRef = window._fb.doc(db, 'novedades', area, periodo, 'datos');
-      await window._fb.updateDoc(novedadesRef, { intentosReporte: nuevoConteo });
+      // Se conserva la fecha del cierre original; solo cambian las firmas si se corrigieron.
+      const actualizacion = { intentosReporte: nuevoConteo };
+      if (cambioFirmas) { actualizacion.elaboradoPor = nuevoElaborado; actualizacion.responsable = nuevoResponsable; }
+      await window._fb.updateDoc(novedadesRef, actualizacion);
       data.intentosReporte = nuevoConteo;
+      data.elaboradoPor = nuevoElaborado;
+      data.responsable  = nuevoResponsable;
 
       await registrarEnAuditoria('regenerar_reporte', area, usuario.email, null, periodo,
-        { intento: nuevoConteo, de: MAX_INTENTOS_REPORTE },
-        `Reporte de ${periodo} regenerado por ${usuario.email} (intento ${nuevoConteo} de ${MAX_INTENTOS_REPORTE})`);
+        cambioFirmas
+          ? { intento: nuevoConteo, de: MAX_INTENTOS_REPORTE,
+              antes: { elaboradoPor: elaboradoAnterior, responsable: responsableAnterior },
+              despues: { elaboradoPor: nuevoElaborado, responsable: nuevoResponsable } }
+          : { intento: nuevoConteo, de: MAX_INTENTOS_REPORTE },
+        `Reporte de ${periodo} regenerado por ${usuario.email} (intento ${nuevoConteo} de ${MAX_INTENTOS_REPORTE})` +
+        (cambioFirmas ? ` — firmas corregidas: «${elaboradoAnterior}» / «${responsableAnterior}» → «${nuevoElaborado}» / «${nuevoResponsable}»` : ''));
 
-      await exportarNovedadesExcel(data, area, periodo, data.elaboradoPor || '', data.responsable || '');
-      await exportarNovedadesPDF(data, area, periodo, data.elaboradoPor || '', data.responsable || '');
+      await exportarNovedadesExcel(data, area, periodo, nuevoElaborado, nuevoResponsable);
+      await exportarNovedadesPDF(data, area, periodo, nuevoElaborado, nuevoResponsable);
 
       toast('✅ Reporte regenerado', 'ok');
       cargarNovedadesActuales();
