@@ -11198,6 +11198,304 @@ async function cargarResumenGeneral(prefix = 'resumen') {
   resumenGeneralCache = { filasPorArea, totales, periodo, detalleAusenciasX };
 }
 
+/* ── Áreas que llenaron la información de un mes (por defecto, el mes pasado) ──
+   Clasifica cada área del catálogo según lo que hay guardado de ese mes:
+     ✅ INFORME GENERADO · 🟡 COMPLETO, SIN INFORME · 🟠 PARCIAL · 🔴 SIN INFORMACIÓN
+   "Día lleno" = todos los efectivos del área tienen código ese día (la misma regla del
+   cierre de mes). El sistema no guarda quién llenó cada casilla, así que los días llenados
+   por el administrador con las herramientas de S/N también cuentan como llenos.
+   Solo lee datos: no modifica nada. */
+const ESTADOS_LLENADO = {
+  generado: { orden: 1, etiqueta: 'INFORME GENERADO',     icono: '✅', color: '#16a34a', fondoXlsx: 'FFD9EAD3' },
+  completo: { orden: 2, etiqueta: 'COMPLETO, SIN INFORME', icono: '🟡', color: '#d97706', fondoXlsx: 'FFFFF2CC' },
+  parcial:  { orden: 3, etiqueta: 'PARCIAL',               icono: '🟠', color: '#ea580c', fondoXlsx: 'FFFCE4D6' },
+  sin:      { orden: 4, etiqueta: 'SIN INFORMACIÓN',       icono: '🔴', color: '#dc2626', fondoXlsx: 'FFF4CCCC' },
+};
+
+let llenadoMesCache = null;   // { periodo, filas, puedeVerContacto }
+let llenadoMesFiltro = 'todas';
+let llenadoMesToken = 0;      // evita que una lectura lenta pise a otra más reciente
+
+function rangosDeDias(dias) { // [1,2,3,5,9,10] → "1-3, 5, 9-10"
+  const orden = [...new Set(dias)].sort((a, b) => a - b);
+  const partes = [];
+  for (let i = 0; i < orden.length; ) {
+    let j = i;
+    while (j + 1 < orden.length && orden[j + 1] === orden[j] + 1) j++;
+    partes.push(j > i ? `${orden[i]}-${orden[j]}` : `${orden[i]}`);
+    i = j + 1;
+  }
+  return partes.join(', ');
+}
+
+function fechaLegible(valor) {
+  try {
+    const d = valor && typeof valor.toDate === 'function' ? valor.toDate() : (valor ? new Date(valor) : null);
+    if (!d || isNaN(d)) return '';
+    return d.toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return ''; }
+}
+
+function clasificarAreaLlenado(data, periodo) {
+  const total = diasEnMes(periodo);
+  const agentes = (data && data.agentes) || [];
+  if (!agentes.length) {
+    return { estado: 'sin', total, diasLlenos: 0, pendientes: '', efectivos: 0, fechaCierre: '', elaboradoPor: '', responsable: '', intentosUsados: null, intentosRestantes: null };
+  }
+  const pendientesArr = diasSinCompletarEnMes(data, periodo);
+  const cerrado = data.estado === 'cerrado';
+  return {
+    estado: cerrado ? 'generado' : (pendientesArr.length === 0 ? 'completo' : 'parcial'),
+    total,
+    diasLlenos: total - pendientesArr.length,
+    pendientes: rangosDeDias(pendientesArr),
+    efectivos: agentes.length,
+    fechaCierre: cerrado ? fechaLegible(data.fechaCierre) : '',
+    elaboradoPor: data.elaboradoPor || '',
+    responsable: data.responsable || '',
+    // Intentos de generación del informe (máximo 3). Los que quedan dependen del plazo:
+    // vencido el plazo se pierden, salvo que el administrador los haya repuesto hoy.
+    intentosUsados: cerrado ? intentosUsadosDeReporte(data) : null,
+    intentosRestantes: cerrado ? intentosRestantesDeReporte(data, periodo) : null,
+  };
+}
+
+// Texto corto de la situación de intentos de un área (pantalla y Excel)
+function situacionIntentos(f) {
+  if (f.intentosUsados === null) return '';
+  if (f.intentosRestantes > 0) return 'Disponibles';
+  return f.intentosUsados >= MAX_INTENTOS_REPORTE ? 'Agotó los 3 intentos' : 'Plazo vencido';
+}
+
+// Correo y teléfono de quienes tienen acceso a cada área (solo accesos activos)
+async function cargarContactosPorArea() {
+  const mapa = new Map();
+  try {
+    const snap = await window._fb.getDocs(window._fb.collection(db, 'accesos'));
+    snap.docs.forEach(d => {
+      const a = d.data();
+      if (a.estado === false) return;
+      const areasAcc = Array.isArray(a.areas) && a.areas.length ? a.areas : (a.area ? [a.area] : []);
+      areasAcc.forEach(ar => {
+        const k = String(ar).toLowerCase().trim();
+        if (!mapa.has(k)) mapa.set(k, []);
+        mapa.get(k).push({ correo: String(a.correo || d.id), telefono: String(a.telefono || '').trim() });
+      });
+    });
+  } catch (e) { console.warn('No se pudieron leer los contactos:', e); }
+  return mapa;
+}
+
+function ordenarFilasLlenado(filas) {
+  return [...filas].sort((a, b) =>
+    (ESTADOS_LLENADO[a.estado].orden - ESTADOS_LLENADO[b.estado].orden) ||
+    a.area.localeCompare(b.area, 'es', { sensitivity: 'base', numeric: true }));
+}
+
+async function analizarLlenadoMes(periodo) {
+  const token = ++llenadoMesToken;
+  const lista = $('llm-lista');
+  $('btn-llm-excel').disabled = true;
+  $('llm-resumen').innerHTML = '';
+  llenadoMesCache = null;
+  lista.innerHTML = '<p class="td-vacio">Leyendo áreas...</p>';
+  try {
+    const puedeVerContacto = esAdmin() || tienePermisoAccion('accesos_ver');
+    const [areasCatalogo, contactos] = await Promise.all([
+      obtenerAreasNovedades(),
+      puedeVerContacto ? cargarContactosPorArea() : Promise.resolve(new Map()),
+    ]);
+    const areas = [...new Set(areasCatalogo.map(a => String(a || '').trim()).filter(Boolean))];
+    const filas = [];
+    const TAM_LOTE = 25;
+    for (let i = 0; i < areas.length; i += TAM_LOTE) {
+      const leidas = await Promise.all(areas.slice(i, i + TAM_LOTE).map(async area => {
+        try {
+          const snap = await window._fb.getDoc(window._fb.doc(db, 'novedades', area, periodo, 'datos'));
+          return { area, data: snap.exists() ? snap.data() : null, error: false };
+        } catch (e) {
+          return { area, data: null, error: true };
+        }
+      }));
+      if (token !== llenadoMesToken) return;         // eligió otro mes mientras leía
+      leidas.forEach(r => filas.push({
+        area: r.area,
+        ...clasificarAreaLlenado(r.data, periodo),
+        nota: r.error ? 'No se pudo leer' : '',
+        contactos: contactos.get(r.area.toLowerCase()) || [],
+      }));
+      lista.innerHTML = `<p class="td-vacio">Leyendo áreas... ${Math.min(i + TAM_LOTE, areas.length)} / ${areas.length}</p>`;
+    }
+    llenadoMesCache = { periodo, filas: ordenarFilasLlenado(filas), puedeVerContacto };
+    llenadoMesFiltro = 'todas';
+    renderizarLlenadoMes();
+    $('btn-llm-excel').disabled = false;
+  } catch (e) {
+    if (token !== llenadoMesToken) return;
+    console.error(e);
+    lista.innerHTML = `<p class="td-vacio">❌ Error: ${mantEsc(e.message)}</p>`;
+  }
+}
+
+function renderizarLlenadoMes() {
+  if (!llenadoMesCache) return;
+  const { filas, puedeVerContacto } = llenadoMesCache;
+  const conteo = { generado: 0, completo: 0, parcial: 0, sin: 0 };
+  filas.forEach(f => conteo[f.estado]++);
+
+  const chip = (clave, texto, n, color) =>
+    `<button type="button" class="llm-chip${llenadoMesFiltro === clave ? ' llm-chip-on' : ''}" style="--c:${color}" onclick="filtrarLlenadoMes('${clave}')"><b>${n}</b> ${texto}</button>`;
+  const errores = filas.filter(f => f.nota).length;
+  $('llm-resumen').innerHTML =
+    chip('todas', 'Todas las áreas', filas.length, '#64748b') +
+    Object.entries(ESTADOS_LLENADO).map(([k, e]) => chip(k, `${e.icono} ${e.etiqueta}`, conteo[k], e.color)).join('') +
+    (errores ? `<span class="llm-aviso">⚠️ ${errores} área(s) no se pudieron leer y cuentan como sin información</span>` : '');
+
+  const visibles = llenadoMesFiltro === 'todas' ? filas : filas.filter(f => f.estado === llenadoMesFiltro);
+  if (!visibles.length) { $('llm-lista').innerHTML = '<p class="td-vacio">No hay áreas en este grupo</p>'; return; }
+
+  $('llm-lista').innerHTML = `<table class="llm-tabla"><thead><tr>
+      <th>Área</th><th>Estado</th><th style="text-align:center">Días llenos</th><th>Días pendientes</th><th style="text-align:center">Intentos usados</th><th style="text-align:center">Le quedan</th>${puedeVerContacto ? '<th>Contacto</th>' : ''}
+    </tr></thead><tbody>` + visibles.map(f => {
+      const e = ESTADOS_LLENADO[f.estado];
+      const contacto = f.contactos.map(c => mantEsc(c.correo) + (c.telefono ? ' · 📞 ' + mantEsc(c.telefono) : '')).join('<br>');
+      return `<tr>
+        <td>${mantEsc(f.area)}</td>
+        <td><span class="llm-badge" style="color:${e.color};background:${e.color}22">${e.icono} ${e.etiqueta}</span></td>
+        <td style="text-align:center">${f.estado === 'sin' ? '—' : `${f.diasLlenos}/${f.total}`}</td>
+        <td>${mantEsc(f.pendientes)}</td>
+        <td style="text-align:center">${f.intentosUsados === null ? '—' : `${f.intentosUsados} de ${MAX_INTENTOS_REPORTE}`}</td>
+        <td style="text-align:center">${f.intentosRestantes === null ? '—' : `<b>${f.intentosRestantes}</b>${f.intentosRestantes === 0 ? `<br><small style="color:var(--txt3)">${situacionIntentos(f)}</small>` : ''}`}</td>
+        ${puedeVerContacto ? `<td>${contacto || '<span style="color:var(--txt3)">sin acceso asignado</span>'}</td>` : ''}
+      </tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+function filtrarLlenadoMes(clave) { llenadoMesFiltro = clave; renderizarLlenadoMes(); }
+
+function abrirModalLlenadoMes() {
+  if (!(esAdmin() || tienePermisoAccion('resumen_exportar') || tienePermisoAccion('resumen_ver'))) {
+    toast('❌ No tiene permiso para ver esta información', 'err');
+    return;
+  }
+  const hoy = obtenerFechaParts();
+  const mesPasado = obtenerPeriodoAnterior(hoy.periodo);
+  const opciones = [];
+  let p = mesPasado;                       // últimos 12 meses terminados (sin el mes en curso)
+  for (let i = 0; i < 12; i++) {
+    const [a, m] = p.split('-');
+    opciones.push(`<option value="${p}">${obtenerNombreMes(m)} ${a}${p === mesPasado ? ' (mes pasado)' : ''}</option>`);
+    p = obtenerPeriodoAnterior(p);
+  }
+  const sel = $('llm-periodo');
+  sel.innerHTML = opciones.join('');
+  sel.value = mesPasado;
+  $('modal-llenado-mes').style.display = 'flex';
+  analizarLlenadoMes(mesPasado);
+}
+
+function cerrarModalLlenadoMes() {
+  llenadoMesToken++;                                   // cancela una lectura en curso
+  $('modal-llenado-mes').style.display = 'none';
+}
+
+async function exportarLlenadoMesExcel() {
+  if (!llenadoMesCache) { toast('Todavía no hay datos cargados', 'err'); return; }
+  const { periodo, filas, puedeVerContacto } = llenadoMesCache;
+  try {
+    if (!window.ExcelJS) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+        s.onload = res; s.onerror = rej; document.head.appendChild(s);
+      });
+    }
+    const [anio, mesNum] = periodo.split('-');
+    const hayNotas = filas.some(f => f.nota);
+    const columnas = [
+      { header: 'ÁREA', key: 'area', width: 46 },
+      { header: 'ESTADO', key: 'estado', width: 26 },
+      { header: 'DÍAS LLENOS', key: 'llenos', width: 13 },
+      { header: 'TOTAL DÍAS', key: 'total', width: 12 },
+      { header: 'DÍAS PENDIENTES', key: 'pendientes', width: 30 },
+      { header: 'EFECTIVOS', key: 'efectivos', width: 11 },
+      { header: 'INFORME GENERADO', key: 'cierre', width: 20 },
+      { header: 'INTENTOS USADOS', key: 'intUsados', width: 12 },
+      { header: 'INTENTOS QUE LE QUEDAN', key: 'intQuedan', width: 14 },
+      { header: 'SITUACIÓN DE INTENTOS', key: 'intSit', width: 22 },
+      { header: 'ELABORADO POR', key: 'elaborado', width: 32 },
+      { header: 'RESPONSABLE', key: 'responsable', width: 32 },
+    ];
+    if (puedeVerContacto) columnas.push({ header: 'CORREO(S)', key: 'correos', width: 40 }, { header: 'TELÉFONO(S)', key: 'telefonos', width: 24 });
+    if (hayNotas) columnas.push({ header: 'NOTA', key: 'nota', width: 18 });
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Llenado del mes');
+    ws.columns = columnas;
+    ordenarFilasLlenado(filas).forEach(f => {
+      const e = ESTADOS_LLENADO[f.estado];
+      const fila = ws.addRow({
+        area: f.area, estado: e.etiqueta,
+        llenos: f.estado === 'sin' ? '' : f.diasLlenos, total: f.total,
+        pendientes: f.pendientes, efectivos: f.efectivos || '',
+        cierre: f.fechaCierre,
+        intUsados: f.intentosUsados === null ? '' : f.intentosUsados,
+        intQuedan: f.intentosRestantes === null ? '' : f.intentosRestantes,
+        intSit: situacionIntentos(f),
+        elaborado: f.elaboradoPor, responsable: f.responsable,
+        correos: f.contactos.map(c => c.correo).join(' / '),
+        telefonos: [...new Set(f.contactos.map(c => c.telefono).filter(Boolean))].join(' / '),
+        nota: f.nota,
+      });
+      fila.getCell('estado').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: e.fondoXlsx } };
+      fila.getCell('estado').font = { bold: true };
+      ['llenos', 'total', 'efectivos', 'intUsados', 'intQuedan'].forEach(k => { fila.getCell(k).alignment = { horizontal: 'center' }; });
+    });
+    const cab = ws.getRow(1);
+    cab.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cab.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } };
+    cab.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columnas.length } };
+
+    // Hoja de resumen
+    const wr = wb.addWorksheet('Resumen');
+    wr.columns = [{ width: 34 }, { width: 14 }];
+    wr.addRow([`LLENADO DE ÁREAS — ${obtenerNombreMes(mesNum).toUpperCase()} ${anio}`]).font = { bold: true, size: 13 };
+    wr.addRow([`Generado: ${new Date().toLocaleString('es-EC')}`]).font = { italic: true, color: { argb: 'FF666666' } };
+    wr.addRow([]);
+    Object.entries(ESTADOS_LLENADO).forEach(([k, e]) => {
+      const r = wr.addRow([e.etiqueta, filas.filter(f => f.estado === k).length]);
+      r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: e.fondoXlsx } };
+      r.getCell(2).alignment = { horizontal: 'center' };
+    });
+    const rt = wr.addRow(['TOTAL DE ÁREAS', filas.length]);
+    rt.font = { bold: true }; rt.getCell(2).alignment = { horizontal: 'center' };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `LLENADO_AREAS_${periodo}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast(`✅ Excel de ${filas.length} áreas descargado`, 'ok');
+  } catch (e) {
+    console.error(e);
+    toast('❌ Error: ' + e.message, 'err');
+  }
+}
+window.abrirModalLlenadoMes = abrirModalLlenadoMes;
+window.cerrarModalLlenadoMes = cerrarModalLlenadoMes;
+window.analizarLlenadoMes = analizarLlenadoMes;
+window.filtrarLlenadoMes = filtrarLlenadoMes;
+window.exportarLlenadoMesExcel = exportarLlenadoMesExcel;
+/* fin llenado del mes */
+
+
 /* ── Exportar a Excel solo los NOMBRES de las áreas del catálogo del sistema ──
    Un único archivo con una columna "ÁREA", ordenada alfabéticamente y sin repetidos.
    Solo lee el catálogo: no modifica nada. */

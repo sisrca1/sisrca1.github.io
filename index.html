@@ -583,6 +583,7 @@
             <button class="btn-acc btn-acc-blue" onclick="cargarResumenGeneral('rep-resumen')" style="margin-top:18px;">Generar resumen</button>
             <button class="btn-acc btn-acc-green" onclick="exportarResumenGeneralExcel()" style="margin-top:18px;">📥 Exportar a Excel</button>
             <button class="btn-acc btn-acc-ghost" onclick="exportarNombresAreasExcel()" style="margin-top:18px;" title="Un Excel con solo el nombre de cada área del sistema">📋 Exportar nombres de las áreas</button>
+            <button class="btn-acc btn-acc-ghost" onclick="abrirModalLlenadoMes()" style="margin-top:18px;" title="Qué áreas llenaron la información del mes pasado y cuáles no">📅 Áreas que llenaron el mes pasado</button>
           </div>
           <div style="overflow-x:auto">
             <table>
@@ -1181,6 +1182,7 @@
             <button class="btn-acc btn-acc-blue" onclick="cargarResumenGeneral()" style="margin-top:18px;" data-permiso="resumen_ver,resumen_exportar">Generar resumen</button>
             <button class="btn-acc btn-acc-green" onclick="exportarResumenGeneralExcel()" style="margin-top:18px;" data-permiso="resumen_exportar">📥 Exportar a Excel</button>
             <button class="btn-acc btn-acc-ghost" onclick="exportarNombresAreasExcel()" style="margin-top:18px;" data-permiso="resumen_exportar" title="Un Excel con solo el nombre de cada área del sistema">📋 Exportar nombres de las áreas</button>
+            <button class="btn-acc btn-acc-ghost" onclick="abrirModalLlenadoMes()" style="margin-top:18px;" data-permiso="resumen_exportar" title="Qué áreas llenaron la información del mes pasado y cuáles no">📅 Áreas que llenaron el mes pasado</button>
           </div>
           <div id="resumen-areas-sin-asignar" class="info-badge" style="display:none;margin:0 20px 16px;align-items:center;gap:8px;flex-wrap:wrap;"></div>
         </div>
@@ -1660,6 +1662,44 @@
     <div class="inf-pie">
       <button type="button" class="inf-btn-cancelar" onclick="cerrarModalLlenarMes()">Cancelar</button>
       <button type="button" class="inf-btn-generar" id="btn-ml-aplicar" onclick="llenarMesCompleto()">Llenar casillas vacías</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: áreas que llenaron la información de un mes ═══ -->
+<style>
+.llm-chip{border:1px solid var(--border);background:var(--bg);color:var(--txt);border-radius:20px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:inherit;}
+.llm-chip b{color:var(--c);font-size:13px;}
+.llm-chip-on{border-color:var(--c);background:color-mix(in srgb, var(--c) 14%, transparent);font-weight:700;}
+.llm-aviso{font-size:11px;color:var(--red);align-self:center;}
+.llm-tabla{width:100%;border-collapse:collapse;font-size:12px;}
+.llm-tabla th{position:sticky;top:0;background:var(--blue-l);color:var(--blue);padding:8px 10px;text-align:left;border-bottom:2px solid var(--blue-m);white-space:nowrap;}
+.llm-tabla td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+.llm-badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:700;white-space:nowrap;}
+</style>
+<div id="modal-llenado-mes" class="modal-overlay" style="display:none">
+  <div class="modal-card" style="max-width:1000px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-titulo">📅 Áreas que llenaron la información</div>
+        <div class="modal-sub">Qué áreas completaron el mes, cuáles generaron su informe y cuáles faltan</div>
+      </div>
+      <button class="modal-cerrar" onclick="cerrarModalLlenadoMes()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field" style="max-width:260px;">
+        <label class="form-label">Mes</label>
+        <select id="llm-periodo" class="filtro-select" onchange="analizarLlenadoMes(this.value)"></select>
+      </div>
+      <div id="llm-resumen" style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;"></div>
+      <div id="llm-lista" style="max-height:48vh;overflow:auto;border:1px solid var(--border);border-radius:10px;"></div>
+      <p style="font-size:11px;color:var(--txt3);margin:10px 0 0;">
+        Un día cuenta como lleno cuando todos los efectivos del área tienen código ese día. El sistema no registra quién llenó cada casilla: los días rellenados por el administrador también cuentan.
+      </p>
+    </div>
+    <div class="inf-pie">
+      <button type="button" class="inf-btn-cancelar" onclick="cerrarModalLlenadoMes()">Cerrar</button>
+      <button type="button" class="inf-btn-generar" id="btn-llm-excel" onclick="exportarLlenadoMesExcel()" disabled>📥 Descargar Excel</button>
     </div>
   </div>
 </div>
@@ -2250,6 +2290,6 @@
   });
 </script>
 
-<script type="module" src="app.js?v=20261002h"></script>
+<script type="module" src="app.js?v=20261102a"></script>
 </body>
 </html>
