@@ -86,7 +86,7 @@ const CODIGOS_VALIDOS = ["S/N", "OA", "X", "CS", "B", "LI", "V", "PE", "FA"];
 const CODIGOS_DESC = {
   "S/N": "SIN NOVEDAD (normal)",
   "OA":  "OTRA ÁREA — Formulario Único de Traslado (FUT)",
-  "X":   "AUSENCIA INJUSTIFICADA",
+  "X":   "AUSENCIA",
   "CS":  "COMISIÓN DE SERVICIO",
   "B":   "BAJA (Fallecido, Destitución, Renuncia)",
   "LI":  "LICENCIA (Paternidad, Matrimonio, Calamidad, Maternidad)",
@@ -106,7 +106,10 @@ const CODIGOS_DESC = {
    Se marca con `observacionManual`. En registros anteriores a esa marca se
    considera escrito a mano todo texto que no coincida con la descripción de
    un código. */
-const OBSERVACIONES_AUTOMATICAS = new Set(Object.values(CODIGOS_DESC));
+// Se incluye también el texto anterior de la X ("AUSENCIA INJUSTIFICADA"): los registros
+// guardados antes del cambio lo tienen como observación automática, y no debe pasar a
+// considerarse escrito a mano (quedaría protegido y no se actualizaría solo).
+const OBSERVACIONES_AUTOMATICAS = new Set([...Object.values(CODIGOS_DESC), 'AUSENCIA INJUSTIFICADA']);
 
 function observacionProtegida(ag) {
   const txt = String((ag && ag.observaciones) || '').trim();
@@ -11651,12 +11654,12 @@ async function exportarResumenGeneralExcel() {
   });
   filaTotal.getCell(1).alignment = { horizontal: 'left' };
 
-  // ── Bloque de detalle de ausencias injustificadas ──
+  // ── Bloque de detalle de ausencias (X) ──
   ws.addRow([]);
   const filaBannerNum = ws.rowCount + 1;
   ws.mergeCells(filaBannerNum, 1, filaBannerNum, 5);
   const bannerCell = ws.getCell(filaBannerNum, 1);
-  bannerCell.value = 'DETALLE DE AUSENCIAS INJUSTIFICADAS (X)';
+  bannerCell.value = 'DETALLE DE AUSENCIAS (X)';
   bannerCell.font = { bold: true, color: { argb: BLANCO } };
   bannerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ROJO } };
   bannerCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -11681,14 +11684,14 @@ async function exportarResumenGeneralExcel() {
     });
 
     ws.mergeCells(ws.rowCount + 1, 1, ws.rowCount + 1, 4);
-    const filaTotalX = ws.addRow(['TOTAL DE PERSONAS CON AUSENCIA INJUSTIFICADA', '', '', '', detalleAusenciasX.length]);
+    const filaTotalX = ws.addRow(['TOTAL DE PERSONAS CON AUSENCIA', '', '', '', detalleAusenciasX.length]);
     filaTotalX.eachCell(cell => {
       cell.font = { bold: true, color: { argb: BLANCO } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ROJO } };
       cell.alignment = { horizontal: 'center' };
     });
   } else {
-    ws.addRow(['Sin ausencias injustificadas este mes']);
+    ws.addRow(['Sin ausencias este mes']);
   }
 
   // ── Nota de pie de página discreta (no institucional, solo trazabilidad técnica) ──
