@@ -12029,6 +12029,10 @@ function infConstruirPdf(jsPDF, d, imgs) {
     'superiores me dirijo a usted mi Coronel, para hacer la entrega del respectivo formato de los parámetros ' +
     'que corresponde al mes de ' + d.mesTexto + ', ' + d.areaTexto + '.';
   y = infJustificar(doc, cuerpo, LM, y, ANCHO, PASO);
+  if (d.motivo) {
+    y += 4;
+    y = infJustificar(doc, 'El atraso en la entrega se debe a lo siguiente: ' + d.motivo, LM, y, ANCHO, PASO);
+  }
   y += 12;
   doc.text('Particular que comunico para los fines de ley correspondientes.', LM, y);
   y += 22;
@@ -12079,7 +12083,8 @@ function infConstruirPdf(jsPDF, d, imgs) {
 /* ══════════════════════════════════════════════════════════════
    INFORME DE ENTREGA / ATRASO — ventana de datos dentro de Envíos
    Es opcional: el usuario puede seguir subiendo su propio PDF.
-   Entrega o Atraso lo decide el plazo (actaEsObligatoriaHoy).
+   Entrega o Atraso lo elige la persona: Entrega siempre; Atraso solo cuando ya pasó
+   el plazo (actaEsObligatoriaHoy), y con el motivo del atraso obligatorio.
 ══════════════════════════════════════════════════════════════ */
 const INF_MAX_FIRMANTES = 4;
 const INF_CARGO_PARA = 'DEPARTAMENTO DE PERSONAL Y MOVILIDAD CTE.';
@@ -12165,7 +12170,7 @@ function infActualizarTarjeta() {
   const tarde = actaEsObligatoriaHoy();
   const sub = $('inf-card-sub');
   if (sub) sub.textContent = tarde
-    ? 'El sistema prepara el informe con los datos del personal. Por estar fuera de plazo, saldrá titulado «Informe de Atraso».'
+    ? 'El sistema prepara el informe con los datos del personal. Por estar fuera de plazo, puede generar el «Informe de Entrega» y el «Informe de Atraso» (este último con el motivo del atraso).'
     : 'El sistema prepara el informe con los datos del personal. Dentro del plazo, saldrá titulado «Informe de Entrega».';
 }
 
@@ -12317,12 +12322,15 @@ async function abrirModalInforme() {
 
   const tarde = actaEsObligatoriaHoy();
   const hoy = new Date();
-  $('inf-modal-titulo').textContent = tarde ? 'Informe de Atraso' : 'Informe de Entrega';
-  const aviso = $('inf-aviso');
-  aviso.className = 'inf-aviso ' + (tarde ? 'inf-aviso-tarde' : 'inf-aviso-ok');
-  aviso.textContent = tarde
-    ? 'Su envío está fuera de plazo: el documento saldrá titulado «INFORME DE ATRASO».'
-    : 'Su envío está dentro del plazo: el documento saldrá titulado «INFORME DE ENTREGA».';
+  // Tipo de documento: Entrega siempre disponible; Atraso solo cuando ya pasó el plazo.
+  // Al abrir viene marcado el que corresponde por fecha, y la persona puede cambiarlo.
+  $('inf-tipo-entrega').checked = !tarde;
+  $('inf-tipo-atraso').checked = tarde;
+  $('inf-tipo-atraso').disabled = !tarde;
+  $('inf-tipo-atraso-lbl').style.opacity = tarde ? '' : '0.55';
+  $('inf-tipo-atraso-nota').textContent = tarde ? '' : '(disponible cuando pase el plazo)';
+  $('inf-motivo').value = '';
+  infCambiarTipo();
 
   $('inf-lugar').value = infLugarDesdeArea(area);
   const f = $('inf-fecha');
@@ -12346,6 +12354,45 @@ async function abrirModalInforme() {
   $('modal-informe').style.display = 'flex';
   const tarjeta = $('modal-informe').querySelector('.modal-card');
   if (tarjeta) tarjeta.scrollTop = 0;
+}
+
+/* Tipo de documento elegido. «Atraso» solo vale si de verdad ya pasó el plazo. */
+function infTipoElegido() {
+  const marcado = document.querySelector('input[name="inf-tipo"]:checked');
+  return (marcado && marcado.value === 'atraso' && actaEsObligatoriaHoy()) ? 'atraso' : 'entrega';
+}
+
+function infCambiarTipo() {
+  const atraso = infTipoElegido() === 'atraso';
+  const tarde = actaEsObligatoriaHoy();
+  $('inf-modal-titulo').textContent = atraso ? 'Informe de Atraso' : 'Informe de Entrega';
+  const aviso = $('inf-aviso');
+  aviso.className = 'inf-aviso ' + (tarde ? 'inf-aviso-tarde' : 'inf-aviso-ok');
+  aviso.textContent = atraso
+    ? 'Su envío está fuera de plazo: el documento saldrá titulado «INFORME DE ATRASO» e incluirá el motivo del atraso.'
+    : (tarde
+        ? 'Su envío está fuera de plazo. Este documento saldrá titulado «INFORME DE ENTREGA»; recuerde que también debe generar el «INFORME DE ATRASO».'
+        : 'Su envío está dentro del plazo: el documento saldrá titulado «INFORME DE ENTREGA».');
+  $('inf-motivo-bloque').style.display = atraso ? 'block' : 'none';
+  infActualizarMotivo();
+}
+
+function infActualizarMotivo() {
+  const m = $('inf-motivo');
+  if (!m) return;
+  $('inf-motivo-cont').textContent = `${m.value.length} / ${m.maxLength}`;
+  m.classList.remove('inf-invalido');
+  const err = $('inf-err-motivo');
+  if (err) { err.textContent = ''; err.style.display = 'none'; }
+}
+
+// Deja el motivo presentable: espacios simples, primera letra en mayúscula y punto final
+function infNormalizarMotivo(texto) {
+  let t = String(texto || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  if (!/[.!?]$/.test(t)) t += '.';
+  return t;
 }
 
 function cerrarModalInforme() { $('modal-informe').style.display = 'none'; }
@@ -12378,6 +12425,13 @@ async function infGenerar() {
     return;
   }
 
+  const esAtraso = infTipoElegido() === 'atraso';
+  const motivo = esAtraso ? infNormalizarMotivo($('inf-motivo').value) : '';
+  if (esAtraso && !motivo) {
+    infMarcarError('motivo', 'Escriba el motivo del atraso: es obligatorio en el Informe de Atraso.', 'inf-motivo');
+    return;
+  }
+
   const btn = $('btn-inf-generar');
   if (btn) { btn.disabled = true; btn.textContent = 'Generando...'; }
   try {
@@ -12388,7 +12442,7 @@ async function infGenerar() {
         sc.onload = res; sc.onerror = rej; document.head.appendChild(sc);
       });
     }
-    const tarde = actaEsObligatoriaHoy();
+    const tarde = esAtraso;   // el tipo lo elige la persona (Atraso solo si ya pasó el plazo)
     const [a, m, dd] = fecha.split('-').map(Number);
     const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
     const fechaTexto = `${dias[new Date(a, m - 1, dd).getDay()]} ${String(dd).padStart(2, '0')} de ${MESES_ES[m - 1].toLowerCase()} del ${a}`;
@@ -12398,6 +12452,7 @@ async function infGenerar() {
 
     const doc = infConstruirPdf(window.jspdf.jsPDF, {
       titulo: tarde ? 'INFORME DE ATRASO.' : 'INFORME DE ENTREGA.',
+      motivo,
       lugar: infTitulo(lugar), fechaTexto, asunto, mesTexto,
       areaTexto: infTitulo(area) + (complemento ? ' ' + complemento : ''),
       para: { ...infPara.persona, cargo: infPara.cargo.trim() },
@@ -12426,6 +12481,8 @@ window.infCbEscribir       = infCbEscribir;
 window.infCbElegir         = infCbElegir;
 window.infCargoEscribir    = infCargoEscribir;
 window.infActualizarTarjeta = infActualizarTarjeta;
+window.infCambiarTipo      = infCambiarTipo;
+window.infActualizarMotivo = infActualizarMotivo;
 window.infLimpiarError     = infLimpiarError;
 window.infActualizarResumen = infActualizarResumen;
 
