@@ -1763,7 +1763,9 @@ async function cargarNovedadesActuales() {
       // servidor); las novedades por día arrancan en blanco, porque cada mes
       // es independiente. El documento del mes anterior solo se LEE: no se
       // modifica ni se borra, conserva sus novedades, su cierre y sus firmas.
-      const agentesArrastrados = arrastrarNominaMesAnterior(docAnterior);
+      // Las personas dadas de baja (lista del administrador) no se arrastran. Si esa
+      // lista no se puede leer, el mes se crea igual con toda la nómina.
+      const agentesArrastrados = arrastrarNominaMesAnterior(docAnterior, await codigosDeBajaSet());
 
       const estructuraInicial = {
         agentes: agentesArrastrados,
@@ -1905,7 +1907,7 @@ function ordenarAgentesPorGrado(agentes) {
    El documento de origen NO se toca: acá únicamente se lee.
    Recibe el snapshot del mes anterior, que cargarNovedadesActuales ya trajo
    para revisar el cierre, así que esto no genera una lectura extra. */
-function arrastrarNominaMesAnterior(docAnterior) {
+function arrastrarNominaMesAnterior(docAnterior, codigosBaja) {
   if (!docAnterior || !docAnterior.exists()) return [];
 
   const previos = docAnterior.data().agentes || [];
@@ -1916,6 +1918,7 @@ function arrastrarNominaMesAnterior(docAnterior) {
     const codigo = String(a.codigo || '').trim();
     const clave = codigo.replace(/\s+/g, '').toUpperCase();
     if (!codigo || vistos.has(clave)) return; // sin código o duplicado: no se arrastra
+    if (codigosBaja && codigosBaja.has(clave)) return; // dado de baja: ya no pertenece al área
     vistos.add(clave);
     nomina.push({
       codigo,
@@ -7095,6 +7098,8 @@ async function importarBaseDatos() {
     }
 
     let noMovidosEsteMes = 0;
+    let omitidosPorBaja = 0;
+    const bajasImportacion = await codigosDeBajaSet();   // las personas dadas de baja no se vuelven a agregar
     const entradas = Object.entries(datos);
     const tamanioLote = 25;
 
@@ -7112,6 +7117,7 @@ async function importarBaseDatos() {
             String(a.codigo || '').replace(/\s+/g, '').toUpperCase() === codigoNuevoNorm
           );
           if (yaExiste) return;
+          if (bajasImportacion.has(codigoNuevoNorm)) { omitidosPorBaja++; return; }
 
           // Si este mes ya figura en otra área, se respeta esa ubicación:
           // el cambio de área del Excel recién aplica el mes que viene.
@@ -7163,6 +7169,7 @@ async function importarBaseDatos() {
       · ${lisNuevos} efectivo(s) nuevos agregados<br>
       · ${lisConservados} efectivo(s) que no venían en el archivo se conservaron intactos${noMovidosEsteMes ? `<br>· ${noMovidosEsteMes} efectivo(s) cambiaron de área: siguen en su área actual este mes y pasan a la nueva desde el mes siguiente` : ''}
     `;
+    if (omitidosPorBaja) resultado.innerHTML += `<br>· ${omitidosPorBaja} efectivo(s) dados de baja no se agregaron a Novedades`;
     show('import-resultado');
     
     toast('✅ Base de datos importada', 'ok');
@@ -7245,6 +7252,7 @@ async function analizarActualizacionAreas() {
     const cambios = [], noEncontrados = [], repetidos = [];
     const vistos = new Set();
     let sinCambios = 0;
+    let omitidosBaja = 0;
 
     for (let i = 1; i < filas.length; i++) {
       const fila = filas[i] || [];
@@ -7259,6 +7267,7 @@ async function analizarActualizacionAreas() {
       if (!areaBruta) continue;                       // sin área en el archivo: no se toca
       const registro = base.get(codigo);
       if (!registro) { noEncontrados.push(codigoBruto); continue; }
+      if (registro.estado === 'baja') { omitidosBaja++; continue; }   // dado de baja: no se traslada
 
       const areaNueva = sanitizarNombreArea(areaBruta);
       if (sanitizarNombreArea(registro.area || '') === areaNueva) { sinCambios++; continue; }
@@ -7289,6 +7298,7 @@ async function analizarActualizacionAreas() {
       · <strong>${sinCambios}</strong> ya estaban en el área correcta (no se tocan)<br>
       · <strong>${noEncontrados.length}</strong> código(s) del archivo no existen en la base — se omiten<br>
       ${repetidos.length ? `· <strong>${repetidos.length}</strong> código(s) repetidos en el archivo — se tomó la primera aparición<br>` : ''}
+      ${omitidosBaja ? `· <strong>${omitidosBaja}</strong> efectivo(s) dados de baja — se omiten<br>` : ''}
       ${base.size ? `· ${base.size} efectivo(s) en la base permanecen intactos<br>` : ''}
       ${noEncontrados.length ? `
         <div style="margin-top:12px;padding:10px;background:#fff1f2;border:1px solid #fda4af;border-radius:8px;">
@@ -7611,6 +7621,7 @@ async function cargarDirectorioPersonal() {
   const panelAreas = $('panel-actualizar-areas');
   if (panelAreas) panelAreas.style.display = esAdmin() ? 'block' : 'none';
   if ($('btn-agregar-personal')) $('btn-agregar-personal').style.display = esAdmin() ? '' : 'none';
+  if ($('btn-bajas-personal')) $('btn-bajas-personal').style.display = esAdmin() ? '' : 'none';
   if ($('personal-check-todos')) $('personal-check-todos').style.display = esAdmin() ? '' : 'none';
   if (!esAdmin()) {
     personalSeleccionados.clear();
@@ -7626,7 +7637,8 @@ async function cargarDirectorioPersonal() {
 
   try {
     const snap = await window._fb.getDocs(window._fb.collection(db, 'personal'));
-    personalDirectorioCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Las personas dadas de baja salen del directorio activo: el administrador las ve en «Bajas»
+    personalDirectorioCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.estado !== 'baja');
     personalPaginaActual = 1;
     hide('personal-cargando');
     show('personal-tabla-container');
@@ -7741,6 +7753,7 @@ function renderizarTablaPersonal() {
         <td style="white-space:nowrap;">
 ${esAdmin() ? `
           <button class="btn-acc btn-acc-blue" style="padding:4px 8px;font-size:11px;" onclick="editarRegistroPersonal('${p.id}')">✎</button>
+          <button class="btn-acc btn-acc-ghost" style="padding:4px 8px;font-size:11px;" title="Dar de baja" onclick="abrirModalBajaDesdeBase('${p.id}')">⬇ Baja</button>
           <button class="btn-acc btn-acc-red" style="padding:4px 8px;font-size:11px;" onclick="eliminarRegistroPersonal('${p.id}')">🗑️</button>` : ''}
         </td>
       </tr>
@@ -8220,6 +8233,11 @@ async function guardarRegistroPersonal() {
   if (!area) { errorEl.textContent = 'El área es obligatoria'; show('modal-personal-error'); return; }
 
   try {
+    if (!modalPersonalIdEdicion && (await codigosDeBajaSet()).has(_normCodigoAgente(codigo))) {
+      errorEl.textContent = 'Esa persona está dada de baja. Para volver a agregarla, reintégrela desde «Bajas».';
+      show('modal-personal-error');
+      return;
+    }
     const areaSanitizada = sanitizarNombreArea(area);
 
     // ── Mes cerrado en el área anterior: no se modifica nada ──
@@ -11213,6 +11231,461 @@ async function cargarResumenGeneral(prefix = 'resumen') {
 
   resumenGeneralCache = { filasPorArea, totales, periodo, detalleAusenciasX };
 }
+
+/* ══════════════════════════════════════════════════════════════
+   BAJAS DEL PERSONAL — solo administrador
+   ─────────────────────────────────────────────────────────────
+   Una baja saca al efectivo de la vista de su área SIN borrar nada:
+     · la lista oficial de bajas vive en `sistema/bajas_personal`
+       (código, grado, nombre, área donde laboraba, fecha, motivo, quién la registró);
+     · en el mes de la baja se marca B desde la fecha hasta fin de mes, y en los
+       meses posteriores (ya creados) se lo retira de la tabla del área;
+     · los meses con informe ya generado NO se tocan;
+     · desde el mes siguiente deja de arrastrarse a la nómina (ver arrastrarNominaMesAnterior);
+     · "Reintegrar" lo devuelve a su área.
+   Se registra desde "Posibles bajas" (personas con B en Novedades) o a mano.
+══════════════════════════════════════════════════════════════ */
+const MOTIVOS_BAJA = ['Fallecimiento', 'Destitución', 'Renuncia', 'Jubilación', 'Otro'];
+let bajasCache = null;          // lista vigente de bajas (sistema/bajas_personal)
+let bajasPestana = 'posibles';  // 'posibles' | 'registradas'
+let posiblesBajas = [];         // resultado de la última búsqueda
+let bajasToken = 0;             // evita que una búsqueda lenta pise a otra más reciente
+let bajaEnRegistro = null;      // persona abierta en el formulario de baja
+
+async function obtenerBajasPersonal(forzar = false) {
+  if (bajasCache && !forzar) return bajasCache;
+  try {
+    const snap = await window._fb.getDoc(window._fb.doc(db, 'sistema', 'bajas_personal'));
+    bajasCache = snap.exists() ? (snap.data().lista || []) : [];
+    return bajasCache;
+  } catch (e) {
+    console.warn('No se pudo leer la lista de bajas:', e);
+    return [];   // no se guarda en caché: se vuelve a intentar la próxima vez
+  }
+}
+
+async function codigosDeBajaSet() {
+  return new Set((await obtenerBajasPersonal()).map(b => _normCodigoAgente(b.codigo)));
+}
+
+function bajaFechaLegible(iso) {   // 2026-10-12 → 12/10/2026
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || '');
+}
+
+function bajaMesesDesde(periodoIni, periodoFin) {
+  const meses = [];
+  let p = periodoIni;
+  while (p <= periodoFin && meses.length < 40) { meses.push(p); p = obtenerPeriodoSiguiente(p); }
+  return meses;
+}
+
+/* Da de baja a una persona. p = { codigo, grado, nombre, area, fecha:'AAAA-MM-DD', motivo, observacion } */
+async function registrarBajaPersonal(p) {
+  if (!esAdmin()) throw new Error('Solo el administrador puede dar de baja');
+  const norm = _normCodigoAgente(p.codigo);
+  if (!norm) throw new Error('Falta el código de la persona');
+  const hoy = obtenerFechaParts();
+  const hoyIso = `${hoy.periodo}-${String(hoy.dia).padStart(2, '0')}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.fecha || '')) throw new Error('Elija la fecha de baja');
+  if (p.fecha > hoyIso) throw new Error('La fecha de baja no puede ser futura');
+  if (!MOTIVOS_BAJA.includes(p.motivo)) throw new Error('Elija el motivo de la baja');
+
+  const periodoFecha = p.fecha.slice(0, 7);
+  const diaFecha = Number(p.fecha.slice(8, 10));
+  const meses = bajaMesesDesde(periodoFecha, hoy.periodo);
+  if (meses.length > 24) throw new Error('La fecha de baja es demasiado antigua (máximo 24 meses atrás)');
+  const area = p.area ? sanitizarNombreArea(p.area) : '';
+
+  // 1) La lista oficial primero: así, aunque algo fallara después, la persona
+  //    ya no se arrastra a los meses nuevos.
+  const refLista = window._fb.doc(db, 'sistema', 'bajas_personal');
+  const snapLista = await window._fb.getDoc(refLista);
+  const lista = snapLista.exists() ? [...(snapLista.data().lista || [])] : [];
+  if (lista.some(b => _normCodigoAgente(b.codigo) === norm)) throw new Error('Esta persona ya está dada de baja');
+  lista.push({
+    codigo: String(p.codigo).trim(),
+    grado: p.grado || '',
+    nombre: p.nombre || '',
+    area,
+    fechaBaja: p.fecha,
+    motivo: p.motivo,
+    observacion: String(p.observacion || '').trim().slice(0, 300),
+    registradoPor: usuario.email,
+    registradoEn: new Date().toISOString()
+  });
+  await window._fb.setDoc(refLista, { lista, ultimaActualizacion: new Date() });
+  bajasCache = lista;
+
+  // 2) Novedades del área: B desde la fecha en el mes de la baja; fuera de la tabla en los meses siguientes
+  const tocados = [], omitidosCerrado = [];
+  if (area) {
+    for (const periodo of meses) {
+      const ref = window._fb.doc(db, 'novedades', area, periodo, 'datos');
+      const snap = await window._fb.getDoc(ref);
+      if (!snap.exists()) continue;
+      const data = snap.data();
+      const agentes = [...(data.agentes || [])];
+      const idx = agentes.findIndex(a => _normCodigoAgente(a.codigo) === norm);
+      if (idx === -1) continue;
+      if (data.estado === 'cerrado') { omitidosCerrado.push(periodo); continue; }   // informe generado: no se toca
+      if (periodo === periodoFecha) {
+        const ag = { ...agentes[idx], novedadesPorDia: { ...(agentes[idx].novedadesPorDia || {}) } };
+        const total = diasEnMes(periodo);
+        for (let d = diaFecha; d <= total; d++) {
+          const v = ag.novedadesPorDia[d];
+          if (!v || v === 'S/N') ag.novedadesPorDia[d] = 'B';   // otros códigos ya escritos se respetan
+        }
+        actualizarObservacionAutomatica(ag, 'B');                // no pisa una observación escrita a mano
+        agentes[idx] = ag;
+      } else {
+        agentes.splice(idx, 1);
+      }
+      await window._fb.setDoc(ref, { agentes, ultimaModificacion: new Date() }, { merge: true });
+      tocados.push(periodo);
+    }
+  }
+
+  // 3) Base de Personal: se marca (si el registro existe), no se borra
+  try {
+    const reg = personalDirectorioCache.find(x => _normCodigoAgente(x.codigo || x.id) === norm);
+    const idPersonal = reg ? reg.id : String(p.codigo).trim();
+    const refP = window._fb.doc(db, 'personal', idPersonal);
+    const snapP = await window._fb.getDoc(refP);
+    if (snapP.exists()) {
+      await window._fb.setDoc(refP, { estado: 'baja', fechaBaja: p.fecha, motivoBaja: p.motivo, ultimaActualizacion: new Date() }, { merge: true });
+    }
+    personalDirectorioCache = personalDirectorioCache.filter(x => _normCodigoAgente(x.codigo || x.id) !== norm);
+  } catch (e) {
+    console.warn('No se pudo marcar la baja en la Base de Personal:', e);
+  }
+
+  await registrarEnAuditoria('baja_personal', area || null, usuario.email, null, periodoFecha,
+    { codigo: String(p.codigo).trim(), fecha: p.fecha, motivo: p.motivo, mesesModificados: tocados, mesesCerradosSinTocar: omitidosCerrado },
+    `Baja de personal: ${p.codigo} — ${p.nombre || ''} · área "${area}" · ${bajaFechaLegible(p.fecha)} · ${p.motivo}`);
+
+  return { tocados, omitidosCerrado };
+}
+
+async function reintegrarBajaPersonal(codigo) {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+  const norm = _normCodigoAgente(codigo);
+  const lista = await obtenerBajasPersonal(true);
+  const b = lista.find(x => _normCodigoAgente(x.codigo) === norm);
+  if (!b) { toast('Esa persona ya no figura en la lista de bajas', 'err'); return; }
+  const ok = await confirmarAccion(
+    `Se reintegrará a ${b.nombre} (código ${b.codigo}) al área "${b.area}".\n\n` +
+    `Volverá a aparecer en la tabla de su área este mes y se arrastrará a los meses siguientes. ` +
+    `Lo que ya se marcó como B no se borra: si hace falta, corríjalo en Novedades.`,
+    'Reintegrar persona'
+  );
+  if (!ok) return;
+  try {
+    const nueva = lista.filter(x => _normCodigoAgente(x.codigo) !== norm);
+    await window._fb.setDoc(window._fb.doc(db, 'sistema', 'bajas_personal'), { lista: nueva, ultimaActualizacion: new Date() });
+    bajasCache = nueva;
+
+    // Base de Personal: se quita la marca
+    try {
+      const refP = window._fb.doc(db, 'personal', String(b.codigo).trim());
+      const snapP = await window._fb.getDoc(refP);
+      if (snapP.exists()) await window._fb.setDoc(refP, { estado: 'activo', fechaBaja: '', motivoBaja: '', ultimaActualizacion: new Date() }, { merge: true });
+    } catch (e) { console.warn('No se pudo quitar la marca de baja en la Base de Personal:', e); }
+
+    // Se lo devuelve a la tabla de su área en el mes en curso (si ese mes ya existe y no está cerrado)
+    let devueltoAlArea = false;
+    if (b.area) {
+      const periodo = obtenerFechaParts().periodo;
+      const ref = window._fb.doc(db, 'novedades', b.area, periodo, 'datos');
+      const snap = await window._fb.getDoc(ref);
+      if (snap.exists() && snap.data().estado !== 'cerrado') {
+        const agentes = [...(snap.data().agentes || [])];
+        if (!agentes.some(a => _normCodigoAgente(a.codigo) === norm)) {
+          agentes.push({ codigo: String(b.codigo).trim(), grado: b.grado || '', apellidosNombres: b.nombre || '', novedadesPorDia: {}, observaciones: '' });
+          await window._fb.setDoc(ref, { agentes, ultimaModificacion: new Date() }, { merge: true });
+          devueltoAlArea = true;
+        }
+      }
+    }
+    await registrarEnAuditoria('reintegro_personal', b.area || null, usuario.email, null, null,
+      { codigo: b.codigo, bajaOriginal: b.fechaBaja }, `Reintegro de personal: ${b.codigo} — ${b.nombre} · área "${b.area}"`);
+    toast(`✅ ${b.nombre} fue reintegrado${devueltoAlArea ? ' y ya figura en su área' : ''}`, 'ok');
+    renderizarBajas();
+    if ($('personal-tabla-container') && $('personal-tabla-container').style.display !== 'none') cargarDirectorioPersonal();
+  } catch (e) {
+    console.error(e);
+    toast('❌ No se pudo reintegrar: ' + e.message, 'err');
+  }
+}
+
+/* ── Ventana principal: Posibles bajas / Bajas registradas ── */
+function abrirModalBajas() {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+  $('modal-bajas').style.display = 'flex';
+  $('bajas-filtro').value = '';
+  cambiarPestanaBajas('registradas');
+}
+
+function cerrarModalBajas() { $('modal-bajas').style.display = 'none'; }
+
+function cambiarPestanaBajas(p) {
+  bajasPestana = p;
+  renderizarBajas();
+}
+
+async function renderizarBajas() {
+  const cont = $('bajas-lista');
+  const lista = await obtenerBajasPersonal(true);
+  const filtro = ($('bajas-filtro').value || '').toLowerCase().trim();
+  const chip = (clave, texto, n, color) =>
+    `<button type="button" class="llm-chip${bajasPestana === clave ? ' llm-chip-on' : ''}" style="--c:${color}" onclick="cambiarPestanaBajas('${clave}')"><b>${n}</b> ${texto}</button>`;
+  $('bajas-pestanas').innerHTML =
+    chip('registradas', 'Bajas registradas', lista.length, '#475569') +
+    chip('posibles', 'Posibles bajas', posiblesBajas.length, '#d97706');
+  $('btn-bajas-buscar').style.display = bajasPestana === 'posibles' ? '' : 'none';
+  $('btn-bajas-excel').style.display = bajasPestana === 'registradas' ? '' : 'none';
+  $('bajas-ayuda').textContent = bajasPestana === 'posibles'
+    ? 'Personas que tienen el código B en Novedades (mes anterior o actual) y aún no están dadas de baja. Pulse «Buscar» para actualizar la lista.'
+    : 'Personas dadas de baja. Ya no aparecen en su área ni se arrastran a los meses nuevos; usted las sigue viendo aquí.';
+
+  const coincide = (txt) => !filtro || String(txt).toLowerCase().includes(filtro);
+
+  if (bajasPestana === 'registradas') {
+    const filas = lista.filter(b => coincide(`${b.codigo} ${b.nombre} ${b.area} ${b.motivo}`))
+      .sort((a, b) => String(b.fechaBaja).localeCompare(String(a.fechaBaja)));
+    if (!filas.length) { cont.innerHTML = `<p class="td-vacio">${lista.length ? 'Ninguna baja coincide con la búsqueda' : 'Todavía no hay bajas registradas'}</p>`; return; }
+    cont.innerHTML = `<table class="llm-tabla"><thead><tr>
+      <th>Código</th><th>Grado</th><th>Apellidos y nombres</th><th>Área donde laboraba</th><th>Fecha de baja</th><th>Motivo</th><th>Registrada por</th><th></th>
+    </tr></thead><tbody>` + filas.map(b => `<tr>
+      <td>${mantEsc(b.codigo)}</td><td>${mantEsc(b.grado)}</td><td>${mantEsc(b.nombre)}</td><td>${mantEsc(b.area)}</td>
+      <td style="white-space:nowrap;font-weight:700;">${bajaFechaLegible(b.fechaBaja)}</td>
+      <td>${mantEsc(b.motivo)}${b.observacion ? `<br><small style="color:var(--txt3)">${mantEsc(b.observacion)}</small>` : ''}</td>
+      <td style="font-size:11px;">${mantEsc(b.registradoPor || '')}<br><span style="color:var(--txt3)">${mantEsc(fechaLegible(b.registradoEn))}</span></td>
+      <td><button class="btn-acc btn-acc-ghost" style="padding:3px 10px;font-size:11px;" data-codigo="${mantEsc(b.codigo)}" onclick="reintegrarBajaPersonal(this.dataset.codigo)">↩ Reintegrar</button></td>
+    </tr>`).join('') + '</tbody></table>';
+    return;
+  }
+
+  const filas = posiblesBajas.filter(x => coincide(`${x.codigo} ${x.nombre} ${x.area}`));
+  if (!filas.length) { cont.innerHTML = `<p class="td-vacio">${posiblesBajas.length ? 'Nadie coincide con la búsqueda' : 'Pulse «Buscar posibles bajas» para revisar las áreas'}</p>`; return; }
+  cont.innerHTML = `<table class="llm-tabla"><thead><tr>
+    <th>Código</th><th>Grado</th><th>Apellidos y nombres</th><th>Área</th><th>Primer día con B</th><th></th>
+  </tr></thead><tbody>` + filas.map((x, i) => `<tr>
+    <td>${mantEsc(x.codigo)}</td><td>${mantEsc(x.grado)}</td><td>${mantEsc(x.nombre)}</td><td>${mantEsc(x.area)}</td>
+    <td style="white-space:nowrap;">${bajaFechaLegible(x.fechaSugerida)}</td>
+    <td><button class="btn-acc btn-acc-red" style="padding:3px 10px;font-size:11px;" onclick="abrirModalBajaDesdePosible(${posiblesBajas.indexOf(x)})">⬇ Dar de baja</button></td>
+  </tr>`).join('') + '</tbody></table>';
+}
+
+/* Busca a las personas con código B en el mes anterior o en el actual */
+async function buscarPosiblesBajas() {
+  if (!esAdmin()) return;
+  const mi = ++bajasToken;
+  const btn = $('btn-bajas-buscar');
+  btn.disabled = true;
+  const cont = $('bajas-lista');
+  cont.innerHTML = '<p class="td-vacio">Revisando las áreas...</p>';
+  try {
+    const hoy = obtenerFechaParts();
+    const periodos = [obtenerPeriodoAnterior(hoy.periodo), hoy.periodo];
+    const areas = await obtenerAreasNovedades();
+    const yaBaja = await codigosDeBajaSet();
+    const mapa = new Map();
+    const lote = 25;
+    for (let i = 0; i < areas.length; i += lote) {
+      await Promise.all(areas.slice(i, i + lote).map(async (area) => {
+        for (const periodo of periodos) {
+          try {
+            const snap = await window._fb.getDoc(window._fb.doc(db, 'novedades', area, periodo, 'datos'));
+            if (!snap.exists()) continue;
+            (snap.data().agentes || []).forEach(a => {
+              const norm = _normCodigoAgente(a.codigo);
+              if (!norm || yaBaja.has(norm)) return;
+              const diasB = Object.entries(a.novedadesPorDia || {}).filter(([, v]) => v === 'B').map(([d]) => Number(d)).sort((x, y) => x - y);
+              if (!diasB.length) return;
+              const fecha = `${periodo}-${String(diasB[0]).padStart(2, '0')}`;
+              const previo = mapa.get(norm);
+              if (!previo) {
+                mapa.set(norm, { codigo: a.codigo, grado: a.grado || '', nombre: a.apellidosNombres || '', area, fechaSugerida: fecha });
+              } else {
+                if (fecha < previo.fechaSugerida) previo.fechaSugerida = fecha;   // la B más antigua
+                previo.area = area;                                               // el área más reciente
+              }
+            });
+          } catch (e) { /* un área sin datos no detiene la búsqueda */ }
+        }
+      }));
+      if (mi !== bajasToken) return;
+      cont.innerHTML = `<p class="td-vacio">Revisando las áreas... ${Math.min(i + lote, areas.length)} / ${areas.length}</p>`;
+    }
+    if (mi !== bajasToken) return;
+    posiblesBajas = [...mapa.values()].sort((a, b) => a.area.localeCompare(b.area, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+    renderizarBajas();
+  } catch (e) {
+    console.error(e);
+    cont.innerHTML = `<p class="td-vacio">❌ No se pudo revisar: ${mantEsc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Formulario para registrar una baja ── */
+function bajaPrepararFormulario(persona) {
+  bajaEnRegistro = persona;
+  const hoy = obtenerFechaParts();
+  const hoyIso = `${hoy.periodo}-${String(hoy.dia).padStart(2, '0')}`;
+  $('baja-codigo').value = persona ? persona.codigo : '';
+  $('baja-codigo').readOnly = !!persona;
+  $('baja-persona').textContent = persona
+    ? `${persona.grado ? persona.grado + ' · ' : ''}${persona.nombre} — Área: ${persona.area || '(sin área)'}`
+    : 'Escriba el código y pulse «Buscar».';
+  const f = $('baja-fecha');
+  f.max = hoyIso;
+  f.value = persona && persona.fechaSugerida ? persona.fechaSugerida : hoyIso;
+  $('baja-motivo').value = '';
+  $('baja-obs').value = '';
+  $('baja-error').style.display = 'none';
+  $('btn-baja-buscar').style.display = persona ? 'none' : '';
+  $('btn-baja-guardar').disabled = !persona;
+  bajaActualizarAviso();
+  $('modal-baja-registro').style.display = 'flex';
+}
+
+function abrirModalBajaDesdePosible(i) {
+  if (!esAdmin()) return;
+  const x = posiblesBajas[i];
+  if (x) bajaPrepararFormulario({ ...x });
+}
+
+function abrirModalBajaManual() {
+  if (!esAdmin()) { toast('❌ Esta función es exclusiva del administrador', 'err'); return; }
+  bajaPrepararFormulario(null);
+}
+
+function abrirModalBajaDesdeBase(id) {
+  if (!esAdmin()) return;
+  const p = personalDirectorioCache.find(x => x.id === id);
+  if (!p) return;
+  bajaPrepararFormulario({
+    codigo: p.codigo || p.id, grado: p.grado || '',
+    nombre: `${p.apellidos || ''} ${p.nombres || ''}`.trim(), area: p.area || ''
+  });
+}
+
+async function bajaBuscarPersona() {
+  const norm = _normCodigoAgente($('baja-codigo').value);
+  const err = $('baja-error');
+  err.style.display = 'none';
+  if (!norm) { err.textContent = 'Escriba el código de la persona.'; err.style.display = 'block'; return; }
+  try {
+    if ((await codigosDeBajaSet()).has(norm)) { err.textContent = 'Esa persona ya está dada de baja.'; err.style.display = 'block'; return; }
+    let lista = personalDirectorioCache;
+    if (!lista.length) {
+      const snap = await window._fb.getDocs(window._fb.collection(db, 'personal'));
+      lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+    const p = lista.find(x => _normCodigoAgente(x.codigo || x.id) === norm);
+    if (!p) { err.textContent = 'No se encontró ese código en la Base de Personal.'; err.style.display = 'block'; return; }
+    const f = $('baja-fecha').value;
+    bajaPrepararFormulario({ codigo: p.codigo || p.id, grado: p.grado || '', nombre: `${p.apellidos || ''} ${p.nombres || ''}`.trim(), area: p.area || '' });
+    if (f) $('baja-fecha').value = f;
+    bajaActualizarAviso();
+  } catch (e) {
+    err.textContent = 'No se pudo buscar: ' + e.message; err.style.display = 'block';
+  }
+}
+
+function bajaActualizarAviso() {
+  const f = $('baja-fecha').value;
+  const aviso = $('baja-aviso');
+  if (!bajaEnRegistro || !/^\d{4}-\d{2}-\d{2}$/.test(f)) { aviso.textContent = ''; return; }
+  aviso.innerHTML =
+    `Al confirmar: en el mes de la baja se marcará <b>B</b> desde el <b>${bajaFechaLegible(f)}</b> hasta fin de mes; ` +
+    `en los meses siguientes ya creados saldrá de la tabla de su área; y dejará de arrastrarse a los meses nuevos. ` +
+    `Los meses con informe ya generado no se modifican. Usted la seguirá viendo en «Bajas registradas».`;
+}
+
+async function guardarBajaDesdeFormulario() {
+  if (!bajaEnRegistro) return;
+  const btn = $('btn-baja-guardar');
+  const err = $('baja-error');
+  err.style.display = 'none';
+  const fecha = $('baja-fecha').value;
+  const motivo = $('baja-motivo').value;
+  if (!fecha) { err.textContent = 'Elija la fecha de baja.'; err.style.display = 'block'; return; }
+  if (!motivo) { err.textContent = 'Elija el motivo de la baja.'; err.style.display = 'block'; return; }
+  if (!(await confirmarAccion(
+    `Se dará de baja a ${bajaEnRegistro.nombre} (código ${bajaEnRegistro.codigo}) desde el ${bajaFechaLegible(fecha)}.\n\nMotivo: ${motivo}.`,
+    'Dar de baja'))) return;
+  btn.disabled = true;
+  try {
+    const r = await registrarBajaPersonal({ ...bajaEnRegistro, fecha, motivo, observacion: $('baja-obs').value });
+    $('modal-baja-registro').style.display = 'none';
+    posiblesBajas = posiblesBajas.filter(x => _normCodigoAgente(x.codigo) !== _normCodigoAgente(bajaEnRegistro.codigo));
+    toast(`✅ Baja registrada${r.omitidosCerrado.length ? ` · no se modificó ${r.omitidosCerrado.join(', ')} (informe ya generado)` : ''}`, 'ok');
+    if ($('modal-bajas').style.display !== 'none') renderizarBajas();
+    if ($('personal-tabla-container') && $('personal-tabla-container').style.display !== 'none') renderizarTablaPersonal();
+  } catch (e) {
+    err.textContent = e.message; err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function exportarBajasExcel() {
+  if (!esAdmin()) return;
+  const lista = await obtenerBajasPersonal(true);
+  if (!lista.length) { toast('No hay bajas registradas para exportar', 'err'); return; }
+  try {
+    if (!window.ExcelJS) {
+      await new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+        sc.onload = res; sc.onerror = rej; document.head.appendChild(sc);
+      });
+    }
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Bajas');
+    ws.columns = [
+      { header: 'CÓDIGO', key: 'codigo', width: 12 }, { header: 'GRADO', key: 'grado', width: 24 },
+      { header: 'APELLIDOS Y NOMBRES', key: 'nombre', width: 38 }, { header: 'ÁREA DONDE LABORABA', key: 'area', width: 36 },
+      { header: 'FECHA DE BAJA', key: 'fecha', width: 15 }, { header: 'MOTIVO', key: 'motivo', width: 18 },
+      { header: 'OBSERVACIÓN', key: 'obs', width: 40 }, { header: 'REGISTRADA POR', key: 'por', width: 32 },
+      { header: 'REGISTRADA EL', key: 'en', width: 20 }
+    ];
+    [...lista].sort((a, b) => String(b.fechaBaja).localeCompare(String(a.fechaBaja))).forEach(b => ws.addRow({
+      codigo: b.codigo, grado: b.grado, nombre: b.nombre, area: b.area, fecha: bajaFechaLegible(b.fechaBaja),
+      motivo: b.motivo, obs: b.observacion || '', por: b.registradoPor || '', en: fechaLegible(b.registradoEn)
+    }));
+    const cab = ws.getRow(1);
+    cab.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } }; c.alignment = { vertical: 'middle', horizontal: 'center' }; });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 9 } };
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = `BAJAS_PERSONAL_${obtenerFechaParts().periodo}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    console.error(e);
+    toast('❌ No se pudo generar el Excel: ' + e.message, 'err');
+  }
+}
+
+window.abrirModalBajas = abrirModalBajas;
+window.cerrarModalBajas = cerrarModalBajas;
+window.cambiarPestanaBajas = cambiarPestanaBajas;
+window.renderizarBajas = renderizarBajas;
+window.buscarPosiblesBajas = buscarPosiblesBajas;
+window.reintegrarBajaPersonal = reintegrarBajaPersonal;
+window.abrirModalBajaDesdePosible = abrirModalBajaDesdePosible;
+window.abrirModalBajaManual = abrirModalBajaManual;
+window.abrirModalBajaDesdeBase = abrirModalBajaDesdeBase;
+window.bajaBuscarPersona = bajaBuscarPersona;
+window.bajaActualizarAviso = bajaActualizarAviso;
+window.guardarBajaDesdeFormulario = guardarBajaDesdeFormulario;
+window.exportarBajasExcel = exportarBajasExcel;
 
 /* ── Áreas que llenaron la información de un mes (por defecto, el mes pasado) ──
    Clasifica cada área del catálogo según lo que hay guardado de ese mes:
